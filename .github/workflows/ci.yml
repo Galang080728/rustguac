@@ -48,3 +48,8 @@ jobs:
 
       - name: Build
         run: $HOME/.cargo/bin/cargo build --release
+
+      - name: Security audit
+        run: |
+          $HOME/.cargo/bin/cargo install cargo-audit
+          $HOME/.cargo/bin/cargo audit
