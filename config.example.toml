@@ -114,7 +114,7 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 # ─── OIDC (Single Sign-On) ───────────────────────────────────────────────────
 #
 # Enables OpenID Connect authentication. Works with any OIDC provider:
-# JumpCloud, Google, Okta, Azure AD, Keycloak, etc.
+# Authentik, Keycloak, Okta, Azure AD, Google, JumpCloud, etc.
 #
 # The client_secret can also be set via the OIDC_CLIENT_SECRET environment
 # variable, which takes precedence over this config file. Recommended for
@@ -124,7 +124,7 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 # continues to work alongside OIDC.
 
 # [oidc]
-# issuer_url = "https://oauth.id.jumpcloud.com/"
+# issuer_url = "https://authentik.example.com/application/o/rustguac/"
 # client_id = "your-client-id"
 # client_secret = "your-client-secret"   # or set OIDC_CLIENT_SECRET env var
 # redirect_uri = "https://your-host/auth/callback"

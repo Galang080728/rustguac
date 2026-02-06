@@ -2,7 +2,7 @@
 
 ## OIDC Single Sign-On
 
-rustguac supports OpenID Connect for user authentication. Any OIDC provider works: JumpCloud, Okta, Azure AD, Google, Keycloak, etc.
+rustguac supports OpenID Connect for user authentication. Any OIDC provider works: Authentik, Keycloak, Okta, Azure AD, Google, JumpCloud, etc.
 
 ### Setup
 
@@ -13,7 +13,7 @@ rustguac supports OpenID Connect for user authentication. Any OIDC provider work
 
 ```toml
 [oidc]
-issuer_url = "https://oauth.id.jumpcloud.com/"
+issuer_url = "https://authentik.example.com/application/o/rustguac/"
 client_id = "your-client-id"
 client_secret = "your-client-secret"
 redirect_uri = "https://your-host/auth/callback"
@@ -58,6 +58,57 @@ extra_scopes = ["groups"]
 ### Logout
 
 `GET /auth/logout` clears the session cookie and deletes the auth session from the database.
+
+### Authentik setup guide
+
+[Authentik](https://goauthentik.io/) is a recommended open-source identity provider that works well with rustguac.
+
+**1. Create a provider** in Authentik:
+
+- Go to **Applications > Providers > Create**
+- Select **OAuth2/OpenID Connect**
+- Name: `rustguac`
+- Authorization flow: pick your default authorization flow (e.g., `default-provider-authorization-implicit-consent`)
+- Client type: **Confidential**
+- Redirect URIs: `https://your-rustguac-host/auth/callback`
+- Under **Advanced protocol settings**:
+  - Scopes: ensure `openid`, `email`, `profile` are selected
+  - Add the `groups` scope (creates the `groups` claim in the ID token)
+
+**2. Create an application:**
+
+- Go to **Applications > Applications > Create**
+- Name: `rustguac`
+- Slug: `rustguac`
+- Provider: select the provider you just created
+- Launch URL: `https://your-rustguac-host/`
+
+**3. Note the provider details:**
+
+- Go back to the provider and note the **Client ID** and **Client Secret**
+- The **OpenID Configuration Issuer** will be: `https://authentik.example.com/application/o/rustguac/`
+
+**4. Configure rustguac:**
+
+```toml
+[oidc]
+issuer_url = "https://authentik.example.com/application/o/rustguac/"
+client_id = "your-client-id"
+redirect_uri = "https://your-rustguac-host/auth/callback"
+default_role = "operator"
+groups_claim = "groups"
+extra_scopes = ["groups"]
+```
+
+```bash
+echo 'OIDC_CLIENT_SECRET=your-client-secret' >> /opt/rustguac/env
+chmod 600 /opt/rustguac/env
+sudo systemctl restart rustguac
+```
+
+**5. (Optional) Set up group-to-role mappings:**
+
+Create groups in Authentik (e.g., `rustguac-admins`, `rustguac-operators`) and assign users to them. Then configure group-to-role mappings in the rustguac Admin page so that group membership automatically assigns roles on login. See [Roles and Access Control](roles-and-access-control.md) for details.
 
 ---
 
