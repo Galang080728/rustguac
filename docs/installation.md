@@ -95,6 +95,15 @@ The `rustguac` service loads environment variables from `/opt/rustguac/env` via 
 
 ## Option C: Docker
 
+Pre-built images are available on [Docker Hub](https://hub.docker.com/r/sol1/rustguac):
+
+```bash
+docker pull sol1/rustguac:latest
+docker run -d -p 8089:8089 sol1/rustguac:latest
+```
+
+To build from source instead:
+
 ```bash
 docker build -t rustguac .
 docker run -d -p 8089:8089 rustguac
@@ -112,7 +121,7 @@ The Docker image:
 ```yaml
 services:
   rustguac:
-    image: registry.example.com/rustguac:latest
+    image: sol1/rustguac:latest
     ports:
       - "8089:8089"
     volumes:

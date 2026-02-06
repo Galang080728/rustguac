@@ -80,6 +80,13 @@ sudo systemctl start rustguac
 ### Option B: Docker
 
 ```bash
+docker pull sol1/rustguac:latest
+docker run -d -p 8089:8089 sol1/rustguac:latest
+```
+
+Pre-built images are available on [Docker Hub](https://hub.docker.com/r/sol1/rustguac). To build from source instead:
+
+```bash
 docker build -t rustguac .
 docker run -d -p 8089:8089 rustguac
 ```
@@ -436,7 +443,7 @@ Example for integrating with an existing stack:
 ```yaml
 services:
   rustguac:
-    image: registry.example.com/rustguac:latest
+    image: sol1/rustguac:latest
     ports:
       - "8089:8089"
     volumes:
@@ -448,11 +455,11 @@ volumes:
   rustguac-data:
 ```
 
-## Building the Docker image for CI
+## Building the Docker image
 
 ```bash
-docker build -t registry.example.com/rustguac:latest .
-docker push registry.example.com/rustguac:latest
+docker build -t sol1/rustguac:latest .
+docker push sol1/rustguac:latest
 ```
 
 ## System dependencies
