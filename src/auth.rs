@@ -1,0 +1,331 @@
+//! Authentication middleware — supports API key and OIDC session cookie.
+
+use crate::db::{self, AuthError, Db};
+use axum::{
+    extract::{ConnectInfo, Request},
+    http::{HeaderMap, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
+use ipnetwork::IpNetwork;
+use serde_json::json;
+use std::net::{IpAddr, SocketAddr};
+
+/// Shared extension carrying the trusted proxy CIDRs from config.
+#[derive(Clone)]
+pub struct TrustedProxies(pub Vec<String>);
+
+/// Identity of the authenticated caller.
+#[derive(Clone, Debug)]
+pub enum AuthIdentity {
+    /// API key admin — always full admin access.
+    ApiKey(String),
+    /// OIDC user with email, role, and group memberships.
+    User {
+        email: String,
+        role: String,
+        groups: Vec<String>,
+    },
+}
+
+impl AuthIdentity {
+    pub fn display_name(&self) -> &str {
+        match self {
+            AuthIdentity::ApiKey(name) => name,
+            AuthIdentity::User { email, .. } => email,
+        }
+    }
+
+    pub fn role(&self) -> &str {
+        match self {
+            AuthIdentity::ApiKey(_) => "admin",
+            AuthIdentity::User { role, .. } => role,
+        }
+    }
+
+    /// Return OIDC group memberships. Empty for API key identities.
+    pub fn groups(&self) -> &[String] {
+        match self {
+            AuthIdentity::ApiKey(_) => &[],
+            AuthIdentity::User { groups, .. } => groups,
+        }
+    }
+
+    /// Check if identity has at least the given role level.
+    /// admin > poweruser > operator > viewer
+    pub fn has_role(&self, min_role: &str) -> bool {
+        role_level(self.role()) >= role_level(min_role)
+    }
+}
+
+/// Map role names to numeric levels for comparison.
+fn role_level(role: &str) -> u8 {
+    match role {
+        "admin" => 4,
+        "poweruser" => 3,
+        "operator" => 2,
+        "viewer" => 1,
+        _ => 0,
+    }
+}
+
+/// Extract the real client IP, honouring X-Forwarded-For when the socket
+/// address belongs to a trusted proxy CIDR.
+pub fn client_ip(headers: &HeaderMap, socket_addr: IpAddr, trusted_proxies: &[String]) -> IpAddr {
+    if !trusted_proxies.is_empty() {
+        let networks: Vec<IpNetwork> = trusted_proxies
+            .iter()
+            .filter_map(|s| s.parse::<IpNetwork>().ok())
+            .collect();
+
+        if networks.iter().any(|net| net.contains(socket_addr)) {
+            if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+                // First IP in X-Forwarded-For is the original client
+                if let Some(first) = xff.split(',').next() {
+                    if let Ok(ip) = first.trim().parse::<IpAddr>() {
+                        return ip;
+                    }
+                }
+            }
+        }
+    }
+    socket_addr
+}
+
+/// Extract session cookie value from the Cookie header.
+fn extract_cookie(request: &Request, name: &str) -> Option<String> {
+    request
+        .headers()
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|c| {
+                let c = c.trim();
+                if let Some(val) = c.strip_prefix(name) {
+                    val.strip_prefix('=').map(|v| v.to_string())
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+/// Axum middleware that validates either API key or session cookie.
+/// On success, inserts `AuthIdentity` into request extensions.
+pub async fn require_auth(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let db = request.extensions().get::<Db>().cloned();
+    let db = match db {
+        Some(db) => db,
+        None => {
+            return next.run(request).await;
+        }
+    };
+
+    let trusted = request.extensions().get::<TrustedProxies>().cloned();
+    let proxies = trusted.map(|t| t.0).unwrap_or_default();
+    let ip = client_ip(request.headers(), addr.ip(), &proxies);
+    let path = request.uri().path().to_string();
+
+    // Path 1: API key from Authorization: Bearer <key> or X-API-Key: <key>
+    let api_key = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .or_else(|| {
+            request
+                .headers()
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok())
+        })
+        .map(|k| k.to_string());
+
+    if let Some(key) = api_key {
+        let validate_ip = Some(ip);
+        let db_clone = db.clone();
+        let result =
+            tokio::task::spawn_blocking(move || db::validate_api_key(&db_clone, &key, validate_ip))
+                .await
+                .unwrap_or(Err(AuthError::InvalidKey));
+
+        return match result {
+            Ok(admin) => {
+                tracing::debug!(admin = %admin.name, "API key authenticated");
+                let mut request = request;
+                request
+                    .extensions_mut()
+                    .insert(AuthIdentity::ApiKey(admin.name));
+                next.run(request).await
+            }
+            Err(AuthError::InvalidKey) => {
+                tracing::warn!(client_ip = %ip, "Authentication failed: invalid API key");
+                (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(json!({"error": "invalid API key"})),
+                )
+                    .into_response()
+            }
+            Err(e) => {
+                tracing::warn!(client_ip = %ip, reason = %e, "Authentication failed");
+                (
+                    StatusCode::FORBIDDEN,
+                    axum::Json(json!({"error": e.to_string()})),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    // Path 2: Session cookie
+    let session_token = extract_cookie(&request, "rustguac_session");
+    if let Some(token) = session_token {
+        let db_clone = db.clone();
+        let result =
+            tokio::task::spawn_blocking(move || db::validate_auth_session(&db_clone, &token))
+                .await
+                .unwrap_or(Err(AuthError::InvalidSession));
+
+        return match result {
+            Ok(user) => {
+                tracing::debug!(email = %user.email, role = %user.role, "Session cookie authenticated");
+                let groups = user.groups_vec();
+                let mut request = request;
+                request.extensions_mut().insert(AuthIdentity::User {
+                    email: user.email,
+                    role: user.role,
+                    groups,
+                });
+                next.run(request).await
+            }
+            Err(_) => {
+                tracing::warn!(client_ip = %ip, "Authentication failed: invalid session cookie");
+                (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(json!({"error": "invalid or expired session"})),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    // Neither API key nor cookie
+    tracing::warn!(client_ip = %ip, path = %path, "Authentication failed: no credentials");
+    (
+        StatusCode::UNAUTHORIZED,
+        axum::Json(json!({"error": "authentication required — use API key or sign in via SSO"})),
+    )
+        .into_response()
+}
+
+/// Optional auth middleware — identical to `require_auth` but passes through
+/// silently when no credentials are present (no 401). Inserts `AuthIdentity`
+/// into extensions on success.
+/// Also checks for `key` query parameter as a fallback for API-key auth
+/// (used by WebSocket connections from API-key users).
+pub async fn optional_auth(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let db = request.extensions().get::<Db>().cloned();
+    let db = match db {
+        Some(db) => db,
+        None => {
+            return next.run(request).await;
+        }
+    };
+
+    let trusted = request.extensions().get::<TrustedProxies>().cloned();
+    let proxies = trusted.map(|t| t.0).unwrap_or_default();
+    let ip = client_ip(request.headers(), addr.ip(), &proxies);
+
+    // Path 1: API key from Authorization header
+    let api_key = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .or_else(|| {
+            request
+                .headers()
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok())
+        })
+        .map(|k| k.to_string());
+
+    // Path 1b: API key from ?key= query parameter (fallback for WebSocket).
+    // Guacamole.WebSocketTunnel appends "?" + connect_data to the URL, so
+    // the raw query string may be "key=XXXX?GUAC_WIDTH=1024&...". Truncate
+    // the value at the first '?' to strip the Guacamole suffix.
+    let api_key = api_key.or_else(|| {
+        request.uri().query().and_then(|q| {
+            q.split('&').find_map(|pair| {
+                let (k, v) = pair.split_once('=')?;
+                if k == "key" {
+                    Some(v.split('?').next().unwrap_or(v).to_string())
+                } else {
+                    None
+                }
+            })
+        })
+    });
+
+    if let Some(key) = api_key {
+        let validate_ip = Some(ip);
+        let db_clone = db.clone();
+        let result =
+            tokio::task::spawn_blocking(move || db::validate_api_key(&db_clone, &key, validate_ip))
+                .await
+                .unwrap_or(Err(AuthError::InvalidKey));
+
+        return match result {
+            Ok(admin) => {
+                tracing::debug!(admin = %admin.name, "Optional auth: API key authenticated");
+                let mut request = request;
+                request
+                    .extensions_mut()
+                    .insert(AuthIdentity::ApiKey(admin.name));
+                next.run(request).await
+            }
+            Err(_) => {
+                tracing::warn!(client_ip = %ip, "Authentication failed: invalid API key (optional auth)");
+                next.run(request).await
+            }
+        };
+    }
+
+    // Path 2: Session cookie
+    let session_token = extract_cookie(&request, "rustguac_session");
+    if let Some(token) = session_token {
+        let db_clone = db.clone();
+        let result =
+            tokio::task::spawn_blocking(move || db::validate_auth_session(&db_clone, &token))
+                .await
+                .unwrap_or(Err(AuthError::InvalidSession));
+
+        return match result {
+            Ok(user) => {
+                tracing::debug!(email = %user.email, role = %user.role, "Optional auth: session cookie authenticated");
+                let groups = user.groups_vec();
+                let mut request = request;
+                request.extensions_mut().insert(AuthIdentity::User {
+                    email: user.email,
+                    role: user.role,
+                    groups,
+                });
+                next.run(request).await
+            }
+            Err(_) => {
+                tracing::warn!(client_ip = %ip, "Authentication failed: invalid session cookie (optional auth)");
+                next.run(request).await
+            }
+        };
+    }
+
+    // No credentials — pass through without identity
+    next.run(request).await
+}

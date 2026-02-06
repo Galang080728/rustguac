@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>rustguac - Admin</title>
+    <style>
+        :root { --primary: #e94560; --primary-hover: #c73652; --accent: #5bc0be; --accent-hover: #4aa3a1; --bg: #1a1a2e; --surface: #16213e; --input: #0f3460; --text: #e0e0e0; --text-muted: #aaa; --border: #333; }
+        body { font-family: monospace; background: var(--bg); color: var(--text); padding: 2em; font-size: 18px; }
+        h1 { color: var(--primary); }
+        h2 { color: var(--primary); font-size: 1em; margin-top: 2em; }
+        a { color: var(--accent); }
+        nav { margin-bottom: 1.5em; font-size: 0.95em; }
+        nav a { margin-right: 1.5em; text-decoration: none; }
+        nav a:hover { text-decoration: underline; }
+        nav .active { color: var(--primary); font-weight: bold; }
+        nav .logout { color: #888; float: right; cursor: pointer; }
+        nav .logout:hover { color: var(--primary); }
+
+        table { border-collapse: collapse; width: 100%; margin-top: 0.5em; }
+        th, td { text-align: left; padding: 0.4em 0.8em; border-bottom: 1px solid var(--border); }
+        th { color: var(--text-muted); font-size: 0.85em; }
+        select {
+            background: var(--input); border: 1px solid var(--border); color: var(--text);
+            font-family: monospace; font-size: 0.9em; padding: 0.2em 0.4em; border-radius: 3px;
+        }
+        select:focus { outline: none; border-color: var(--primary); }
+        input[type="text"] {
+            background: var(--input); border: 1px solid var(--border); color: var(--text);
+            font-family: monospace; font-size: 0.9em; padding: 0.3em 0.5em; border-radius: 3px;
+        }
+        input[type="text"]:focus { outline: none; border-color: var(--primary); }
+        .btn-small {
+            background: none; border: none; color: var(--primary);
+            cursor: pointer; font-family: monospace; padding: 0; font-size: 0.9em;
+        }
+        .btn-small:hover { text-decoration: underline; }
+        .btn-action { color: var(--accent); }
+        button.btn-primary {
+            padding: 0.4em 1.2em; background: var(--primary); color: #fff; border: none;
+            font-family: monospace; font-size: 0.9em; border-radius: 3px; cursor: pointer;
+        }
+        button.btn-primary:hover { background: var(--primary-hover); }
+        .add-form {
+            background: var(--surface); padding: 1em 1.5em; border-radius: 6px;
+            display: inline-flex; gap: 0.8em; align-items: center; margin-top: 0.8em;
+        }
+        .disabled-row { opacity: 0.5; }
+        .status-active { color: var(--accent); }
+        .status-disabled { color: var(--primary); }
+        #error { color: var(--primary); margin-top: 0.5em; }
+    </style>
+</head>
+<body>
+    <img id="site-logo" src="/logo.svg" style="max-height:40px;vertical-align:middle;margin-right:0.5em" alt=""><h1 style="display:inline;vertical-align:middle">rustguac</h1>
+    <nav>
+        <a href="/addressbook.html">Address Book</a>
+        <a href="/sessions.html" id="sessions-link">Sessions</a>
+        <a href="/recordings.html">Recordings</a>
+        <a href="/docs.html">Docs</a>
+        <a href="/admin.html" class="active">Admin</a>
+        <span class="logout" id="logout-btn">logout</span>
+    </nav>
+
+    <h2>Users</h2>
+    <table id="users-table">
+        <thead><tr>
+            <th>Email</th><th>Name</th><th>Role</th><th>Groups</th><th>Status</th><th>Last Login</th><th></th>
+        </tr></thead>
+        <tbody id="users-body"></tbody>
+    </table>
+
+    <h2>Group-to-Role Mappings</h2>
+    <p style="color:#888;font-size:0.85em;margin:0.3em 0;">OIDC groups are matched to roles on every login. The highest matching role wins.</p>
+    <table id="mappings-table">
+        <thead><tr>
+            <th>Group</th><th>Role</th><th>Created</th><th></th>
+        </tr></thead>
+        <tbody id="mappings-body"></tbody>
+    </table>
+    <div class="add-form">
+        <input type="text" id="new-group" placeholder="OIDC group name">
+        <select id="new-role">
+            <option value="viewer">viewer</option>
+            <option value="operator">operator</option>
+            <option value="poweruser">poweruser</option>
+            <option value="admin">admin</option>
+        </select>
+        <button class="btn-primary" id="add-mapping-btn">Add Mapping</button>
+    </div>
+    <div id="error"></div>
+
+    <script>
+        function applyTheme(theme) {
+            if (!theme) return;
+            var props = {primary_color:'--primary',primary_hover:'--primary-hover',accent_color:'--accent',accent_hover:'--accent-hover',bg_color:'--bg',surface_color:'--surface',input_color:'--input',text_color:'--text',text_muted:'--text-muted',border_color:'--border'};
+            var r = document.documentElement.style;
+            for (var k in props) { if (theme[k]) r.setProperty(props[k], theme[k]); }
+            if (theme.logo_url) { var logo = document.getElementById('site-logo'); if (logo) { logo.src = theme.logo_url; logo.style.display = ''; } }
+        }
+        fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
+            if(d.site_title){document.title=d.site_title+' - Admin';document.querySelector('h1').textContent=d.site_title;}
+            applyTheme(d.theme);
+        });
+
+        var apiKey = sessionStorage.getItem('rustguac_api_key');
+
+        function apiHeaders(extra) {
+            var h = {};
+            if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
+            if (extra) { for (var k in extra) h[k] = extra[k]; }
+            return h;
+        }
+
+        function checkAdmin() {
+            fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) { window.location.href = '/'; return; }
+                return res.json();
+            })
+            .then(function(data) {
+                if (!data || data.role !== 'admin') {
+                    window.location.href = '/addressbook.html';
+                    return;
+                }
+                loadUsers();
+                loadMappings();
+            })
+            .catch(function() { window.location.href = '/'; });
+        }
+        checkAdmin();
+
+        document.getElementById('logout-btn').addEventListener('click', function() {
+            sessionStorage.removeItem('rustguac_api_key');
+            fetch('/auth/logout', { credentials: 'same-origin' })
+            .finally(function() { window.location.href = '/'; });
+        });
+
+        var errorEl = document.getElementById('error');
+        function showError(msg) { errorEl.textContent = msg; setTimeout(function(){ errorEl.textContent = ''; }, 5000); }
+
+        // ── Users ──
+
+        function loadUsers() {
+            fetch('/api/users', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) { return res.json(); })
+            .then(function(users) {
+                var tbody = document.getElementById('users-body');
+                tbody.innerHTML = '';
+                users.forEach(function(u) {
+                    var tr = document.createElement('tr');
+                    if (u.disabled) tr.className = 'disabled-row';
+
+                    tr.appendChild(td(u.email));
+                    tr.appendChild(td(u.name));
+
+                    // Role dropdown
+                    var roleTd = document.createElement('td');
+                    var sel = document.createElement('select');
+                    ['viewer','operator','poweruser','admin'].forEach(function(r) {
+                        var opt = document.createElement('option');
+                        opt.value = r; opt.textContent = r;
+                        if (r === u.role) opt.selected = true;
+                        sel.appendChild(opt);
+                    });
+                    sel.addEventListener('change', function() {
+                        fetch('/api/users/' + encodeURIComponent(u.email) + '/role', {
+                            method: 'PUT',
+                            headers: apiHeaders({'Content-Type': 'application/json'}),
+                            credentials: 'same-origin',
+                            body: JSON.stringify({role: sel.value})
+                        }).then(function(res) {
+                            if (!res.ok) return res.json().then(function(d){ showError(d.error); });
+                        });
+                    });
+                    roleTd.appendChild(sel);
+                    tr.appendChild(roleTd);
+
+                    // Groups
+                    var groups = u.oidc_groups || '';
+                    var groupsTd = td(groups.split(',').filter(function(g){return g;}).join(', '));
+                    groupsTd.style.maxWidth = '200px';
+                    groupsTd.style.overflow = 'hidden';
+                    groupsTd.style.textOverflow = 'ellipsis';
+                    groupsTd.title = groups;
+                    tr.appendChild(groupsTd);
+
+                    // Status
+                    var statusTd = document.createElement('td');
+                    statusTd.textContent = u.disabled ? 'disabled' : 'active';
+                    statusTd.className = u.disabled ? 'status-disabled' : 'status-active';
+                    tr.appendChild(statusTd);
+
+                    tr.appendChild(td(u.last_login_at || 'never'));
+
+                    // Actions
+                    var actTd = document.createElement('td');
+
+                    var toggleBtn = document.createElement('button');
+                    toggleBtn.className = 'btn-small btn-action';
+                    toggleBtn.textContent = u.disabled ? 'enable' : 'disable';
+                    toggleBtn.addEventListener('click', (function(email, disabled) {
+                        return function() {
+                            var action = disabled ? 'enable' : 'disable';
+                            fetch('/api/users/' + encodeURIComponent(email) + '/' + action, {
+                                method: 'POST', headers: apiHeaders(), credentials: 'same-origin'
+                            }).then(function() { loadUsers(); });
+                        };
+                    })(u.email, u.disabled));
+                    actTd.appendChild(toggleBtn);
+                    actTd.appendChild(document.createTextNode(' '));
+
+                    var logoutBtn = document.createElement('button');
+                    logoutBtn.className = 'btn-small btn-action';
+                    logoutBtn.textContent = 'force-logout';
+                    logoutBtn.addEventListener('click', (function(email) {
+                        return function() {
+                            fetch('/api/users/' + encodeURIComponent(email) + '/sessions', {
+                                method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin'
+                            }).then(function(res) { return res.json(); }).then(function(d) {
+                                if (d.sessions_revoked !== undefined) showError('Revoked ' + d.sessions_revoked + ' session(s)');
+                            });
+                        };
+                    })(u.email));
+                    actTd.appendChild(logoutBtn);
+                    actTd.appendChild(document.createTextNode(' '));
+
+                    var delBtn = document.createElement('button');
+                    delBtn.className = 'btn-small';
+                    delBtn.textContent = 'delete';
+                    delBtn.addEventListener('click', (function(email) {
+                        return function() {
+                            if (!confirm('Delete user ' + email + '?')) return;
+                            fetch('/api/users/' + encodeURIComponent(email), {
+                                method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin'
+                            }).then(function() { loadUsers(); });
+                        };
+                    })(u.email));
+                    actTd.appendChild(delBtn);
+
+                    tr.appendChild(actTd);
+                    tbody.appendChild(tr);
+                });
+            });
+        }
+
+        function td(text) {
+            var el = document.createElement('td');
+            el.textContent = text || '';
+            return el;
+        }
+
+        // ── Group Mappings ──
+
+        function loadMappings() {
+            fetch('/api/admin/group-mappings', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) { return res.json(); })
+            .then(function(mappings) {
+                var tbody = document.getElementById('mappings-body');
+                tbody.innerHTML = '';
+                mappings.forEach(function(m) {
+                    var tr = document.createElement('tr');
+                    tr.appendChild(td(m.oidc_group));
+
+                    var roleTd = document.createElement('td');
+                    var sel = document.createElement('select');
+                    ['viewer','operator','poweruser','admin'].forEach(function(r) {
+                        var opt = document.createElement('option');
+                        opt.value = r; opt.textContent = r;
+                        if (r === m.role) opt.selected = true;
+                        sel.appendChild(opt);
+                    });
+                    sel.addEventListener('change', (function(id, group) {
+                        return function() {
+                            fetch('/api/admin/group-mappings/' + id, {
+                                method: 'PUT',
+                                headers: apiHeaders({'Content-Type': 'application/json'}),
+                                credentials: 'same-origin',
+                                body: JSON.stringify({group: group, role: sel.value})
+                            }).then(function(res) {
+                                if (!res.ok) return res.json().then(function(d){ showError(d.error); });
+                            });
+                        };
+                    })(m.id, m.oidc_group));
+                    roleTd.appendChild(sel);
+                    tr.appendChild(roleTd);
+
+                    tr.appendChild(td(m.created_at));
+
+                    var actTd = document.createElement('td');
+                    var delBtn = document.createElement('button');
+                    delBtn.className = 'btn-small';
+                    delBtn.textContent = 'delete';
+                    delBtn.addEventListener('click', (function(id) {
+                        return function() {
+                            fetch('/api/admin/group-mappings/' + id, {
+                                method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin'
+                            }).then(function() { loadMappings(); });
+                        };
+                    })(m.id));
+                    actTd.appendChild(delBtn);
+                    tr.appendChild(actTd);
+
+                    tbody.appendChild(tr);
+                });
+            });
+        }
+
+        document.getElementById('add-mapping-btn').addEventListener('click', function() {
+            var group = document.getElementById('new-group').value.trim();
+            var role = document.getElementById('new-role').value;
+            if (!group) { showError('Group name is required'); return; }
+
+            fetch('/api/admin/group-mappings', {
+                method: 'POST',
+                headers: apiHeaders({'Content-Type': 'application/json'}),
+                credentials: 'same-origin',
+                body: JSON.stringify({group: group, role: role})
+            })
+            .then(function(res) {
+                if (!res.ok) return res.json().then(function(d){ showError(d.error); throw new Error(); });
+                return res.json();
+            })
+            .then(function() {
+                document.getElementById('new-group').value = '';
+                loadMappings();
+            })
+            .catch(function(){});
+        });
+
+        // Auto-refresh
+        setInterval(function() { loadUsers(); loadMappings(); }, 10000);
+    </script>
+</body>
+</html>

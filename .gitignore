@@ -1,0 +1,49 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# guacd local build (built by dev.sh)
+/.guacd-build/
+
+# Session recordings (runtime data, not code)
+/recordings/
+
+# Runtime config overrides
+config.local.toml
+
+# SQLite database (runtime data)
+*.db
+*.db-journal
+*.db-wal
+
+# TLS certificates
+*.pem
+
+# Debian packaging (build artifacts)
+debian/.debhelper/
+debian/rustguac/
+debian/staging/
+debian/changelog
+debian/debhelper-build-stamp
+debian/files
+debian/rustguac.debhelper.log
+debian/rustguac.postrm.debhelper
+debian/rustguac.substvars
+
+# RPM packaging (build artifacts)
+rpm/staging/
+*.rpm
+
+# Claude Code project memory
+.claude/

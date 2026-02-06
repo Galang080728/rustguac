@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Build & Lint
+    runs-on: ubuntu-latest
+    container: debian:trixie-slim
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates gcc g++ pkg-config make \
+            libcairo2-dev libjpeg-dev libpng-dev libwebp-dev \
+            libssh2-1-dev libssl-dev libvncserver-dev \
+            libpango1.0-dev libpulse-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+            libtelnet-dev libwebsockets-dev uuid-dev freerdp3-dev
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: $HOME/.cargo/bin/cargo fmt --check
+
+      - name: Clippy
+        run: $HOME/.cargo/bin/cargo clippy -- -D warnings
+
+      - name: Build
+        run: $HOME/.cargo/bin/cargo build --release

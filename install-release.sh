@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+#
+# install-release.sh — Install rustguac from a release tarball.
+#
+# This script is shipped inside the release tarball and installs
+# pre-built binaries to /opt/rustguac with systemd services.
+#
+# Usage:
+#   sudo ./install.sh
+#   sudo ./install.sh --no-tls
+#   sudo ./install.sh --hostname=myhost.example.com
+#
+set -euo pipefail
+
+PREFIX="/opt/rustguac"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+info()  { echo -e "${GREEN}[install]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[install]${NC} $*"; }
+error() { echo -e "${RED}[install]${NC} $*" >&2; }
+
+NO_TLS=0
+TLS_HOSTNAME=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-tls)      NO_TLS=1 ;;
+        --hostname=*)  TLS_HOSTNAME="${arg#--hostname=}" ;;
+        -h|--help)
+            echo "Usage: sudo $0 [--no-tls] [--hostname=FQDN]"
+            echo ""
+            echo "Options:"
+            echo "  --no-tls          Skip TLS certificate generation (plain HTTP only)"
+            echo "  --hostname=FQDN   Hostname for the TLS certificate (default: system hostname)"
+            exit 0
+            ;;
+    esac
+done
+
+if [[ $EUID -ne 0 ]]; then
+    error "This script must be run as root (sudo ./install.sh)"
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: Create system user
+# ---------------------------------------------------------------------------
+if ! id -u rustguac >/dev/null 2>&1; then
+    useradd --system --create-home --home-dir /home/rustguac --shell /usr/sbin/nologin rustguac
+    info "Created system user 'rustguac'"
+else
+    info "System user 'rustguac' already exists"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 2: Install files
+# ---------------------------------------------------------------------------
+info "Installing rustguac to $PREFIX..."
+
+mkdir -p "$PREFIX"/{bin,sbin,lib,static,data,recordings,tls}
+
+# Binaries
+install -m 755 "$SCRIPT_DIR/bin/rustguac" "$PREFIX/bin/rustguac"
+install -m 755 "$SCRIPT_DIR/sbin/guacd"   "$PREFIX/sbin/guacd"
+
+# Libraries
+cp -a "$SCRIPT_DIR/lib/"*.so* "$PREFIX/lib/"
+
+# Static web assets
+cp -r "$SCRIPT_DIR/static/"* "$PREFIX/static/"
+
+# Drive setup script (if present)
+if [[ -d "$SCRIPT_DIR/scripts" ]]; then
+    cp -r "$SCRIPT_DIR/scripts/"* "$PREFIX/bin/"
+    chmod +x "$PREFIX/bin/"*.sh 2>/dev/null || true
+fi
+
+# Default config (don't overwrite existing)
+if [[ ! -f "$PREFIX/config.toml" ]]; then
+    cp "$SCRIPT_DIR/config.toml.default" "$PREFIX/config.toml"
+
+    if [[ $NO_TLS -eq 0 ]]; then
+        # config.toml.default already has [tls] section
+        info "Created config at $PREFIX/config.toml (TLS enabled)"
+    else
+        # Remove TLS section for plain HTTP
+        sed -i '/^\[tls\]/,$d' "$PREFIX/config.toml"
+        sed -i 's/listen_addr = .*/listen_addr = "0.0.0.0:8089"/' "$PREFIX/config.toml"
+        info "Created config at $PREFIX/config.toml (plain HTTP)"
+    fi
+else
+    info "Config already exists at $PREFIX/config.toml (not overwritten)"
+fi
+
+chown -R rustguac:rustguac "$PREFIX/data" "$PREFIX/recordings"
+
+# ---------------------------------------------------------------------------
+# Step 3: ldconfig
+# ---------------------------------------------------------------------------
+echo "$PREFIX/lib" > /etc/ld.so.conf.d/rustguac.conf
+ldconfig
+info "Library path configured"
+
+# ---------------------------------------------------------------------------
+# Step 4: systemd services
+# ---------------------------------------------------------------------------
+info "Installing systemd services..."
+cp "$SCRIPT_DIR/systemd/rustguac.service"       /etc/systemd/system/
+cp "$SCRIPT_DIR/systemd/rustguac-guacd.service"  /etc/systemd/system/
+
+systemctl daemon-reload
+systemctl enable rustguac-guacd.service
+systemctl enable rustguac.service
+
+info "Systemd services installed and enabled"
+
+# ---------------------------------------------------------------------------
+# Step 5: TLS certificate
+# ---------------------------------------------------------------------------
+if [[ $NO_TLS -eq 0 ]]; then
+    if [[ -f "$PREFIX/tls/cert.pem" && -f "$PREFIX/tls/key.pem" ]]; then
+        info "TLS certificates already exist (not overwritten)"
+    else
+        CERT_HOSTNAME="${TLS_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}"
+        info "Generating self-signed TLS certificate for: $CERT_HOSTNAME"
+        "$PREFIX/bin/rustguac" generate-cert \
+            --hostname "$CERT_HOSTNAME" \
+            --out-dir "$PREFIX/tls"
+        chown -R rustguac:rustguac "$PREFIX/tls"
+        chmod 600 "$PREFIX/tls/key.pem"
+        chmod 644 "$PREFIX/tls/cert.pem"
+        info "TLS certificate generated at $PREFIX/tls/"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
+echo ""
+info "============================================"
+info "  rustguac installed to $PREFIX"
+info "============================================"
+echo ""
+info "Next steps:"
+info "  1. Create an admin:"
+info "     $PREFIX/bin/rustguac --config $PREFIX/config.toml add-admin --name admin"
+info ""
+info "  2. (Optional) Set up encrypted file transfer:"
+info "     sudo $PREFIX/bin/drive-setup.sh"
+info ""
+info "  3. Start the services:"
+info "     sudo systemctl start rustguac"
+echo ""
+if [[ $NO_TLS -eq 0 ]]; then
+    info "  4. Open in browser:"
+    info "     https://$(hostname -f 2>/dev/null || hostname)"
+    info ""
+    warn "  Using self-signed cert — browser will show a warning."
+    warn "  Replace $PREFIX/tls/cert.pem and key.pem with real certs for production."
+else
+    info "  4. Open in browser:"
+    info "     http://localhost:8089"
+fi
+echo ""

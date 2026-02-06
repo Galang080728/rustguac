@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>rustguac - Address Book</title>
+    <style>
+        :root { --primary: #e94560; --primary-hover: #c73652; --accent: #5bc0be; --accent-hover: #4aa3a1; --bg: #1a1a2e; --surface: #16213e; --input: #0f3460; --text: #e0e0e0; --text-muted: #aaa; --border: #333; }
+        body { font-family: monospace; background: var(--bg); color: var(--text); padding: 2em; font-size: 18px; }
+        h1 { color: var(--primary); }
+        a { color: var(--accent); }
+        nav { margin-bottom: 1.5em; font-size: 0.95em; }
+        nav a { margin-right: 1.5em; text-decoration: none; }
+        nav a:hover { text-decoration: underline; }
+        nav .active { color: var(--primary); font-weight: bold; }
+        nav .logout { color: #888; float: right; cursor: pointer; }
+        nav .logout:hover { color: var(--primary); }
+
+        .layout { display: flex; gap: 2em; }
+        .sidebar { min-width: 220px; max-width: 280px; }
+        .main { flex: 1; min-width: 0; }
+
+        .sidebar-header { display: flex; align-items: center; gap: 0.5em; margin-bottom: 0.5em; }
+        .sidebar-header strong { flex: 1; }
+
+        .folder-list { list-style: none; padding: 0; margin: 0; }
+        .folder-list li {
+            padding: 0.5em 0.8em;
+            cursor: pointer;
+            border-radius: 3px;
+            margin-bottom: 2px;
+        }
+        .folder-list li:hover { background: var(--surface); }
+        .folder-list li.selected { background: var(--input); color: var(--accent); }
+        .folder-name-row { display: flex; align-items: center; gap: 0.5em; flex-wrap: wrap; }
+        .folder-scope { font-size: 0.7em; color: #666; background: var(--input); padding: 0.1em 0.4em; border-radius: 2px; }
+        .folder-list li.selected .folder-scope { background: var(--surface); }
+        .folder-desc { font-size: 0.8em; color: #666; display: block; margin-top: 0.15em; }
+        .folder-count { font-size: 0.7em; color: #555; display: block; margin-top: 0.15em; }
+
+        .entries-table { border-collapse: collapse; width: 100%; }
+        .entries-table th, .entries-table td {
+            text-align: left; padding: 0.4em 0.8em; border-bottom: 1px solid var(--border);
+        }
+        .entries-table th { color: var(--text-muted); font-size: 0.85em; }
+        .entries-table tr:hover { background: var(--surface); }
+        .type-badge {
+            display: inline-block;
+            padding: 0.1em 0.5em;
+            border-radius: 3px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        .type-ssh { background: #1b4332; color: #52b788; }
+        .type-rdp { background: #3d1f00; color: #f0a050; }
+        .type-web { background: #1a1a4e; color: #7b8ff0; }
+
+        button {
+            padding: 0.4em 1em;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            font-family: monospace;
+            font-size: 0.9em;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover { background: var(--primary-hover); }
+        button:disabled { background: #555; cursor: default; }
+        .btn-connect { background: var(--accent); color: var(--bg); font-weight: bold; }
+        .btn-connect:hover { background: var(--accent-hover); }
+        .btn-small {
+            background: none; border: none; color: var(--primary);
+            cursor: pointer; font-family: monospace; padding: 0; font-size: 0.9em;
+        }
+        .btn-small:hover { text-decoration: underline; }
+        .btn-add { background: var(--input); color: var(--accent); border: 1px solid var(--border); }
+        .btn-add:hover { background: var(--surface); }
+
+        .empty { color: #666; margin: 2em 0; }
+        #global-error { color: var(--primary); margin-top: 0.8em; white-space: pre-wrap; }
+        .no-vault { color: #888; margin: 2em 0; }
+
+        /* Empty state card */
+        .empty-state {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 3em 2em;
+            text-align: center;
+            margin: 2em 0;
+        }
+        .empty-state h3 { color: var(--accent); margin-bottom: 0.5em; }
+        .empty-state p { color: #888; margin-bottom: 1.5em; }
+        .empty-state button { font-size: 1.1em; padding: 0.6em 1.5em; }
+
+        /* Folder action bar */
+        .folder-actions {
+            display: flex; align-items: center; gap: 0.6em; margin-bottom: 1em;
+            flex-wrap: wrap;
+        }
+        .folder-actions strong { font-size: 1.1em; }
+        .folder-actions .desc { color: #666; font-size: 0.9em; }
+
+        /* Modal overlay */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: var(--surface);
+            border-radius: 6px;
+            padding: 1.5em;
+            min-width: 400px;
+            max-width: 520px;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+        .modal h3 { color: var(--primary); margin-top: 0; }
+        .modal label { display: block; margin-top: 0.8em; color: var(--text-muted); font-size: 0.9em; }
+        .modal input, .modal select, .modal textarea {
+            display: block;
+            width: 100%;
+            padding: 0.4em;
+            margin-top: 0.2em;
+            background: var(--input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: monospace;
+            font-size: 1em;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        .modal input:focus, .modal select:focus, .modal textarea:focus { outline: none; border-color: var(--primary); }
+        .modal-actions { margin-top: 1.2em; display: flex; gap: 0.8em; }
+        .modal-actions .btn-cancel { background: var(--border); }
+        .modal-actions .btn-cancel:hover { background: #444; }
+
+        .field-hint { font-size: 0.8em; color: #555; margin-top: 0.2em; }
+    </style>
+</head>
+<body>
+    <img id="site-logo" src="/logo.svg" style="max-height:40px;vertical-align:middle;margin-right:0.5em" alt=""><h1 style="display:inline;vertical-align:middle">rustguac</h1>
+    <nav>
+        <a href="/addressbook.html" class="active">Address Book</a>
+        <a href="/sessions.html" id="sessions-link">Sessions</a>
+        <a href="/recordings.html">Recordings</a>
+        <a href="/docs.html">Docs</a>
+        <a href="/admin.html" id="admin-link" style="display:none">Admin</a>
+        <span class="logout" id="logout-btn">logout</span>
+    </nav>
+
+    <div id="global-error"></div>
+
+    <div id="no-vault" class="no-vault" style="display:none">
+        Address book is not configured. A Vault/OpenBao backend is required.<br>
+        See <a href="/docs.html">Docs</a> for setup instructions.
+    </div>
+
+    <div id="vault-unavailable" class="no-vault" style="display:none">
+        <strong>Address book is temporarily unavailable.</strong><br>
+        Cannot reach the Vault server. The service will retry automatically every 30 seconds.<br>
+        Check the rustguac logs for details: <code>journalctl -u rustguac -f</code>
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display:none">
+        <h3>No folders yet</h3>
+        <p>Create a folder to start organising connection entries.</p>
+        <button class="btn-connect" id="btn-empty-create-folder">Create First Folder</button>
+    </div>
+
+    <div id="main-content" style="display:none">
+        <div class="layout">
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <strong>Folders</strong>
+                    <button class="btn-add admin-only" id="btn-new-folder" style="display:none;padding:0.2em 0.6em;font-size:0.85em" title="Create new folder">+ folder</button>
+                </div>
+                <ul class="folder-list" id="folder-list"></ul>
+            </div>
+            <div class="main">
+                <div id="entries-header" style="display:none">
+                    <div class="folder-actions">
+                        <strong id="entries-title"></strong>
+                        <span id="entries-desc" class="desc"></span>
+                        <span style="flex:1"></span>
+                        <button class="btn-add admin-only" id="btn-new-entry" style="display:none;padding:0.3em 0.8em;font-size:0.9em">+ add entry</button>
+                        <button class="btn-small admin-only" id="btn-edit-folder" style="display:none" title="Edit folder settings">edit folder</button>
+                        <button class="btn-small admin-only" id="btn-delete-folder" style="display:none" title="Delete folder and all entries">delete folder</button>
+                    </div>
+                </div>
+                <div id="entries-content">
+                    <p class="empty">Select a folder to view entries.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Folder create/edit modal -->
+    <div class="modal-overlay" id="folder-modal">
+        <div class="modal">
+            <h3 id="folder-modal-title">New Folder</h3>
+            <label>Name
+                <input type="text" id="fm-name" placeholder="e.g. infra-servers" pattern="[a-zA-Z0-9_.-]+" maxlength="64">
+            </label>
+            <div class="field-hint">Alphanumeric, hyphens, underscores, dots only.</div>
+            <label>Description
+                <input type="text" id="fm-desc" placeholder="e.g. Infrastructure servers">
+            </label>
+            <label>Allowed groups (comma-separated)
+                <input type="text" id="fm-groups" placeholder="e.g. sysadmins,devops">
+            </label>
+            <div class="field-hint">OIDC groups that can see this folder. Leave empty for admin-only access.</div>
+            <label>Scope
+                <select id="fm-scope">
+                    <option value="shared">shared (all instances)</option>
+                    <option value="instance">instance (this server only)</option>
+                </select>
+            </label>
+            <div id="fm-error" style="color:var(--primary);margin-top:0.5em"></div>
+            <div class="modal-actions">
+                <button id="fm-save">Save</button>
+                <button class="btn-cancel" id="fm-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Entry create/edit modal -->
+    <div class="modal-overlay" id="entry-modal">
+        <div class="modal">
+            <h3 id="entry-modal-title">New Entry</h3>
+            <label>Name
+                <input type="text" id="em-name" placeholder="e.g. web-server-01" pattern="[a-zA-Z0-9_.-]+" maxlength="64">
+            </label>
+            <div class="field-hint">Alphanumeric, hyphens, underscores, dots. Used as the Vault key.</div>
+            <label>Display name
+                <input type="text" id="em-display-name" placeholder="e.g. Web Server 01">
+            </label>
+            <label>Type
+                <select id="em-type">
+                    <option value="ssh">SSH</option>
+                    <option value="rdp">RDP</option>
+                    <option value="web">Web</option>
+                </select>
+            </label>
+            <div id="em-ssh-fields">
+                <label>Hostname
+                    <input type="text" id="em-hostname" placeholder="10.0.1.5">
+                </label>
+                <label>Port
+                    <input type="number" id="em-port" value="22">
+                </label>
+                <label>Username
+                    <input type="text" id="em-username">
+                </label>
+                <label>Password
+                    <input type="password" id="em-password">
+                </label>
+                <label>Private key (PEM)
+                    <textarea id="em-private-key" rows="3" style="resize:vertical;font-size:0.85em" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+                </label>
+            </div>
+            <div id="em-rdp-fields" style="display:none">
+                <label>Hostname
+                    <input type="text" id="em-rdp-hostname" placeholder="10.0.2.3">
+                </label>
+                <label>Port
+                    <input type="number" id="em-rdp-port" value="3389">
+                </label>
+                <label>Username
+                    <input type="text" id="em-rdp-username">
+                </label>
+                <label>Password
+                    <input type="password" id="em-rdp-password">
+                </label>
+                <label>Domain
+                    <input type="text" id="em-rdp-domain">
+                </label>
+                <label>Security
+                    <select id="em-rdp-security">
+                        <option value="">Default</option>
+                        <option value="any">Any</option>
+                        <option value="nla">NLA</option>
+                        <option value="tls">TLS</option>
+                        <option value="rdp">RDP</option>
+                    </select>
+                </label>
+                <label style="margin-top:0.8em">
+                    <input type="checkbox" id="em-rdp-ignore-cert" style="display:inline;width:auto;margin-right:0.4em"> Ignore certificate errors
+                </label>
+            </div>
+            <div id="em-web-fields" style="display:none">
+                <label>URL
+                    <input type="text" id="em-url" placeholder="https://example.com">
+                </label>
+            </div>
+            <div id="em-drive-section" style="display:none;margin-top:0.8em;">
+                <label>
+                    <input type="checkbox" id="em-enable-drive" style="display:inline;width:auto;margin-right:0.4em"> Enable file transfer
+                    <div style="color:#888;font-size:0.75em;margin-top:0.2em;">RDP: mounts a shared drive. SSH: enables SFTP file browser.</div>
+                </label>
+            </div>
+            <div id="em-move-section" style="display:none;margin-top:1em;padding-top:0.8em;border-top:1px solid var(--border)">
+                <label>Move to folder
+                    <select id="em-move-target">
+                        <option value="">(keep in current folder)</option>
+                    </select>
+                </label>
+            </div>
+            <div id="em-error" style="color:var(--primary);margin-top:0.5em"></div>
+            <div class="modal-actions">
+                <button id="em-save">Save</button>
+                <button class="btn-cancel" id="em-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function applyTheme(theme) {
+            if (!theme) return;
+            var props = {primary_color:'--primary',primary_hover:'--primary-hover',accent_color:'--accent',accent_hover:'--accent-hover',bg_color:'--bg',surface_color:'--surface',input_color:'--input',text_color:'--text',text_muted:'--text-muted',border_color:'--border'};
+            var r = document.documentElement.style;
+            for (var k in props) { if (theme[k]) r.setProperty(props[k], theme[k]); }
+            if (theme.logo_url) { var logo = document.getElementById('site-logo'); if (logo) { logo.src = theme.logo_url; logo.style.display = ''; } }
+        }
+        fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
+            if(d.site_title){document.title=d.site_title+' - Address Book';document.querySelector('h1').textContent=d.site_title;}
+            applyTheme(d.theme);
+        });
+        var apiKey = sessionStorage.getItem('rustguac_api_key');
+
+        if (!apiKey) {
+            fetch('/api/me', { credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) window.location.href = '/';
+            })
+            .catch(function() { window.location.href = '/'; });
+        }
+
+        document.getElementById('logout-btn').addEventListener('click', function() {
+            sessionStorage.removeItem('rustguac_api_key');
+            fetch('/auth/logout', { credentials: 'same-origin' })
+            .finally(function() { window.location.href = '/'; });
+        });
+
+        function apiHeaders(extra) {
+            var h = {};
+            if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
+            if (extra) { for (var k in extra) h[k] = extra[k]; }
+            return h;
+        }
+
+        var roleLevel = { admin: 4, poweruser: 3, operator: 2, viewer: 1 };
+        var isAdmin = false;
+        var selectedFolder = null; // { name, scope, description }
+        var folders = [];
+        var folderEntryCounts = {}; // "scope/name" -> count
+        var currentEntries = []; // entries for the currently selected folder
+
+        function showError(msg) {
+            document.getElementById('global-error').textContent = msg;
+        }
+        function clearError() {
+            document.getElementById('global-error').textContent = '';
+        }
+
+        // Check user role and vault status
+        function init() {
+            fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                isAdmin = data.role === 'admin';
+                var level = roleLevel[data.role] || 0;
+                if (level < 3) {
+                    document.getElementById('sessions-link').style.display = 'none';
+                }
+                if (isAdmin) {
+                    document.getElementById('admin-link').style.display = '';
+                    var els = document.querySelectorAll('.admin-only');
+                    for (var i = 0; i < els.length; i++) els[i].style.display = '';
+                }
+                if (apiKey) {
+                    document.getElementById('admin-link').style.display = '';
+                }
+                if (!data.vault_enabled) {
+                    if (data.vault_configured) {
+                        // Vault is configured but not reachable yet
+                        document.getElementById('vault-unavailable').style.display = '';
+                        // Auto-retry every 15s
+                        setTimeout(function() {
+                            document.getElementById('vault-unavailable').style.display = 'none';
+                            init();
+                        }, 15000);
+                    } else {
+                        // Vault not configured at all
+                        document.getElementById('no-vault').style.display = '';
+                    }
+                    return;
+                }
+                loadFolders();
+            })
+            .catch(function(err) {
+                showError('Failed to check authentication: ' + err.message);
+            });
+        }
+
+        function loadFolders() {
+            fetch('/api/addressbook/folders', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) {
+                if (res.status === 503) {
+                    document.getElementById('vault-unavailable').style.display = '';
+                    setTimeout(function() {
+                        document.getElementById('vault-unavailable').style.display = 'none';
+                        loadFolders();
+                    }, 15000);
+                    return null;
+                }
+                if (res.status === 404) {
+                    document.getElementById('no-vault').style.display = '';
+                    return null;
+                }
+                if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                return res.json();
+            })
+            .then(function(data) {
+                if (!data) return;
+                folders = data;
+                if (folders.length === 0 && isAdmin) {
+                    document.getElementById('empty-state').style.display = '';
+                    document.getElementById('main-content').style.display = 'none';
+                } else if (folders.length === 0) {
+                    document.getElementById('main-content').style.display = '';
+                    renderFolders();
+                } else {
+                    document.getElementById('empty-state').style.display = 'none';
+                    document.getElementById('main-content').style.display = '';
+                    renderFolders();
+                    // Auto-select first folder if none selected
+                    if (!selectedFolder && folders.length > 0) {
+                        selectedFolder = folders[0];
+                        renderFolders();
+                        loadEntries(folders[0].scope, folders[0].name);
+                    }
+                }
+            })
+            .catch(function(err) {
+                showError('Failed to load folders: ' + err.message);
+                // Still show the layout so users can see something
+                document.getElementById('main-content').style.display = '';
+            });
+        }
+
+        function renderFolders() {
+            var ul = document.getElementById('folder-list');
+            ul.innerHTML = '';
+            if (folders.length === 0) {
+                ul.innerHTML = '<li style="color:#666;cursor:default;padding:1em 0.8em">No folders visible to your account.</li>';
+                return;
+            }
+            folders.forEach(function(f) {
+                var li = document.createElement('li');
+                li.setAttribute('data-name', f.name);
+                li.setAttribute('data-scope', f.scope);
+                if (selectedFolder && selectedFolder.name === f.name && selectedFolder.scope === f.scope) {
+                    li.className = 'selected';
+                }
+                var row = document.createElement('div');
+                row.className = 'folder-name-row';
+                var nameSpan = document.createElement('span');
+                nameSpan.textContent = f.name;
+                row.appendChild(nameSpan);
+                var scopeBadge = document.createElement('span');
+                scopeBadge.className = 'folder-scope';
+                scopeBadge.textContent = f.scope;
+                row.appendChild(scopeBadge);
+                li.appendChild(row);
+                var countKey = f.scope + '/' + f.name;
+                if (folderEntryCounts[countKey] !== undefined) {
+                    var countSpan = document.createElement('span');
+                    countSpan.className = 'folder-count';
+                    countSpan.textContent = folderEntryCounts[countKey] + ' entries';
+                    li.appendChild(countSpan);
+                }
+                if (f.description) {
+                    var desc = document.createElement('span');
+                    desc.className = 'folder-desc';
+                    desc.textContent = f.description;
+                    li.appendChild(desc);
+                }
+                li.addEventListener('click', function() {
+                    selectedFolder = f;
+                    renderFolders();
+                    loadEntries(f.scope, f.name);
+                });
+                ul.appendChild(li);
+            });
+        }
+
+        function loadEntries(scope, folder) {
+            var header = document.getElementById('entries-header');
+            header.style.display = '';
+            document.getElementById('entries-title').textContent = folder;
+            var f = folders.find(function(x) { return x.name === folder && x.scope === scope; });
+            document.getElementById('entries-desc').textContent = f && f.description ? f.description : '';
+
+            var content = document.getElementById('entries-content');
+            content.innerHTML = '<p class="empty">Loading...</p>';
+
+            fetch('/api/addressbook/folders/' + encodeURIComponent(scope) + '/' + encodeURIComponent(folder) + '/entries', {
+                headers: apiHeaders(),
+                credentials: 'same-origin'
+            })
+            .then(function(res) {
+                if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                return res.json();
+            })
+            .then(function(entries) {
+                currentEntries = entries;
+                var countKey = scope + '/' + folder;
+                folderEntryCounts[countKey] = entries.length;
+                renderFolders(); // Update count badge
+                renderEntries(entries, scope, folder);
+            })
+            .catch(function(err) {
+                content.innerHTML = '<p class="empty">' + escapeHtml(err.message) + '</p>';
+            });
+        }
+
+        function renderEntries(entries, scope, folder) {
+            var content = document.getElementById('entries-content');
+            if (entries.length === 0) {
+                if (isAdmin) {
+                    content.innerHTML = '<div class="empty-state" style="padding:2em;margin:1em 0">' +
+                        '<p style="color:#888;margin:0 0 1em 0">No entries in this folder.</p>' +
+                        '<button class="btn-add" id="btn-empty-add-entry" style="font-size:1em;padding:0.5em 1.2em">+ Add First Entry</button>' +
+                        '</div>';
+                    document.getElementById('btn-empty-add-entry').addEventListener('click', function() {
+                        openNewEntry();
+                    });
+                } else {
+                    content.innerHTML = '<p class="empty">No entries in this folder.</p>';
+                }
+                return;
+            }
+
+            var html = '<table class="entries-table"><thead><tr>' +
+                '<th>Name</th><th>Type</th><th>Host</th><th>User</th><th></th>';
+            if (isAdmin) html += '<th></th><th></th>';
+            html += '</tr></thead><tbody>';
+
+            entries.forEach(function(e) {
+                var label = e.display_name || e.name;
+                var host = e.session_type === 'web' ? (e.url || '') : (e.hostname || '');
+                if (e.port && e.session_type !== 'web') host += ':' + e.port;
+                var typeCls = 'type-' + e.session_type;
+
+                html += '<tr>';
+                html += '<td>' + escapeHtml(label) + '</td>';
+                html += '<td><span class="type-badge ' + typeCls + '">' + e.session_type.toUpperCase() + '</span></td>';
+                html += '<td>' + escapeHtml(host) + '</td>';
+                html += '<td>' + escapeHtml(e.username || '') + '</td>';
+                html += '<td><button class="btn-connect" data-connect="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">Connect</button></td>';
+                if (isAdmin) {
+                    html += '<td><button class="btn-small" data-edit-entry="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '" data-type="' + escapeAttr(e.session_type) + '">edit</button></td>';
+                    html += '<td><button class="btn-small" data-delete-entry="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">delete</button></td>';
+                }
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            content.innerHTML = html;
+        }
+
+        function escapeHtml(s) {
+            var d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function escapeAttr(s) {
+            return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // Connect to an entry
+        document.getElementById('entries-content').addEventListener('click', function(e) {
+            var btn = e.target;
+            if (btn.getAttribute('data-connect')) {
+                var name = btn.getAttribute('data-connect');
+                var scope = btn.getAttribute('data-scope');
+                var folder = btn.getAttribute('data-folder');
+                btn.disabled = true;
+                btn.textContent = 'Connecting...';
+                clearError();
+
+                fetch('/api/addressbook/folders/' + encodeURIComponent(scope) + '/' + encodeURIComponent(folder) + '/entries/' + encodeURIComponent(name) + '/connect', {
+                    method: 'POST',
+                    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify({})
+                })
+                .then(function(res) {
+                    if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                    return res.json();
+                })
+                .then(function(data) {
+                    window.open(data.client_url, '_blank');
+                })
+                .catch(function(err) {
+                    showError(err.message);
+                })
+                .finally(function() {
+                    btn.disabled = false;
+                    btn.textContent = 'Connect';
+                });
+                return;
+            }
+
+            // Delete entry
+            if (btn.getAttribute('data-delete-entry')) {
+                var name = btn.getAttribute('data-delete-entry');
+                var scope = btn.getAttribute('data-scope');
+                var folder = btn.getAttribute('data-folder');
+                if (!confirm('Delete entry "' + name + '"?')) return;
+                fetch('/api/addressbook/folders/' + encodeURIComponent(scope) + '/' + encodeURIComponent(folder) + '/entries/' + encodeURIComponent(name), {
+                    method: 'DELETE',
+                    headers: apiHeaders(),
+                    credentials: 'same-origin'
+                }).then(function(res) {
+                    if (!res.ok) return res.text().then(function(t) { showError(t); });
+                    loadEntries(scope, folder);
+                });
+                return;
+            }
+
+            // Edit entry
+            if (btn.getAttribute('data-edit-entry')) {
+                openEditEntry(
+                    btn.getAttribute('data-edit-entry'),
+                    btn.getAttribute('data-scope'),
+                    btn.getAttribute('data-folder'),
+                    btn.getAttribute('data-type')
+                );
+            }
+        });
+
+        // ── Folder modal ──
+
+        var folderEditMode = null; // null = create, {scope, name} = edit
+
+        function openNewFolder() {
+            folderEditMode = null;
+            document.getElementById('folder-modal-title').textContent = 'New Folder';
+            document.getElementById('fm-name').value = '';
+            document.getElementById('fm-name').disabled = false;
+            document.getElementById('fm-desc').value = '';
+            document.getElementById('fm-groups').value = '';
+            document.getElementById('fm-scope').value = 'shared';
+            document.getElementById('fm-scope').disabled = false;
+            document.getElementById('fm-error').textContent = '';
+            document.getElementById('folder-modal').classList.add('active');
+        }
+
+        document.getElementById('btn-new-folder').addEventListener('click', openNewFolder);
+        document.getElementById('btn-empty-create-folder').addEventListener('click', openNewFolder);
+
+        document.getElementById('btn-edit-folder').addEventListener('click', function() {
+            if (!selectedFolder) return;
+            folderEditMode = { scope: selectedFolder.scope, name: selectedFolder.name };
+            document.getElementById('folder-modal-title').textContent = 'Edit Folder: ' + selectedFolder.name;
+            document.getElementById('fm-name').value = selectedFolder.name;
+            document.getElementById('fm-name').disabled = true;
+            document.getElementById('fm-desc').value = selectedFolder.description || '';
+            document.getElementById('fm-scope').value = selectedFolder.scope;
+            document.getElementById('fm-scope').disabled = true;
+            document.getElementById('fm-error').textContent = '';
+
+            // Load current config for groups
+            fetch('/api/addressbook/folders/' + encodeURIComponent(selectedFolder.scope) + '/' + encodeURIComponent(selectedFolder.name) + '/config', {
+                headers: apiHeaders(),
+                credentials: 'same-origin'
+            }).then(function(res) {
+                if (res.ok) return res.json();
+                return null;
+            }).then(function(data) {
+                if (data && data.allowed_groups) {
+                    document.getElementById('fm-groups').value = data.allowed_groups.join(', ');
+                }
+            }).catch(function() {});
+
+            document.getElementById('fm-groups').value = '';
+            document.getElementById('folder-modal').classList.add('active');
+        });
+
+        document.getElementById('fm-cancel').addEventListener('click', function() {
+            document.getElementById('folder-modal').classList.remove('active');
+        });
+
+        document.getElementById('fm-save').addEventListener('click', function() {
+            var name = document.getElementById('fm-name').value.trim();
+            var desc = document.getElementById('fm-desc').value.trim();
+            var groups = document.getElementById('fm-groups').value.split(',').map(function(g) { return g.trim(); }).filter(Boolean);
+            var scope = document.getElementById('fm-scope').value;
+            var errEl = document.getElementById('fm-error');
+
+            if (!name || !/^[a-zA-Z0-9_.-]+$/.test(name)) {
+                errEl.textContent = 'Name must be alphanumeric, hyphens, underscores, dots only.';
+                return;
+            }
+
+            errEl.textContent = '';
+            var saveBtn = document.getElementById('fm-save');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+
+            if (folderEditMode) {
+                fetch('/api/addressbook/folders/' + encodeURIComponent(folderEditMode.scope) + '/' + encodeURIComponent(folderEditMode.name), {
+                    method: 'PUT',
+                    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ allowed_groups: groups, description: desc })
+                })
+                .then(function(res) {
+                    if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                    document.getElementById('folder-modal').classList.remove('active');
+                    // Update selected folder description
+                    if (selectedFolder) selectedFolder.description = desc;
+                    loadFolders();
+                })
+                .catch(function(err) { errEl.textContent = err.message; })
+                .finally(function() { saveBtn.disabled = false; saveBtn.textContent = 'Save'; });
+            } else {
+                fetch('/api/addressbook/folders', {
+                    method: 'POST',
+                    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ name: name, allowed_groups: groups, description: desc, scope: scope })
+                })
+                .then(function(res) {
+                    if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                    document.getElementById('folder-modal').classList.remove('active');
+                    // Auto-select the new folder
+                    selectedFolder = { name: name, scope: scope, description: desc };
+                    loadFolders();
+                })
+                .catch(function(err) { errEl.textContent = err.message; })
+                .finally(function() { saveBtn.disabled = false; saveBtn.textContent = 'Save'; });
+            }
+        });
+
+        document.getElementById('btn-delete-folder').addEventListener('click', function() {
+            if (!selectedFolder) return;
+            if (!confirm('Delete folder "' + selectedFolder.name + '" and ALL its entries? This cannot be undone.')) return;
+            fetch('/api/addressbook/folders/' + encodeURIComponent(selectedFolder.scope) + '/' + encodeURIComponent(selectedFolder.name), {
+                method: 'DELETE',
+                headers: apiHeaders(),
+                credentials: 'same-origin'
+            }).then(function(res) {
+                if (!res.ok) return res.text().then(function(t) { showError(t); });
+                selectedFolder = null;
+                document.getElementById('entries-header').style.display = 'none';
+                document.getElementById('entries-content').innerHTML = '<p class="empty">Select a folder to view entries.</p>';
+                loadFolders();
+            });
+        });
+
+        // ── Entry modal ──
+
+        var entryEditMode = null; // null = create, {scope, folder, name} = edit
+        var entryTypeSelect = document.getElementById('em-type');
+
+        entryTypeSelect.addEventListener('change', function() {
+            document.getElementById('em-ssh-fields').style.display = 'none';
+            document.getElementById('em-rdp-fields').style.display = 'none';
+            document.getElementById('em-web-fields').style.display = 'none';
+            var val = entryTypeSelect.value;
+            if (val === 'ssh') document.getElementById('em-ssh-fields').style.display = '';
+            else if (val === 'rdp') document.getElementById('em-rdp-fields').style.display = '';
+            else if (val === 'web') document.getElementById('em-web-fields').style.display = '';
+            // Show drive option for SSH and RDP only
+            document.getElementById('em-drive-section').style.display = (val === 'ssh' || val === 'rdp') ? '' : 'none';
+        });
+
+        function openNewEntry() {
+            if (!selectedFolder) return;
+            entryEditMode = null;
+            document.getElementById('entry-modal-title').textContent = 'New Entry in ' + selectedFolder.name;
+            document.getElementById('em-name').value = '';
+            document.getElementById('em-name').disabled = false;
+            document.getElementById('em-display-name').value = '';
+            entryTypeSelect.value = 'ssh';
+            entryTypeSelect.disabled = false;
+            entryTypeSelect.dispatchEvent(new Event('change'));
+            clearEntryFields();
+            document.getElementById('em-move-section').style.display = 'none';
+            document.getElementById('em-error').textContent = '';
+            document.getElementById('entry-modal').classList.add('active');
+        }
+
+        document.getElementById('btn-new-entry').addEventListener('click', openNewEntry);
+
+        function clearEntryFields() {
+            document.getElementById('em-hostname').value = '';
+            document.getElementById('em-port').value = '22';
+            document.getElementById('em-username').value = '';
+            document.getElementById('em-password').value = '';
+            document.getElementById('em-private-key').value = '';
+            document.getElementById('em-rdp-hostname').value = '';
+            document.getElementById('em-rdp-port').value = '3389';
+            document.getElementById('em-rdp-username').value = '';
+            document.getElementById('em-rdp-password').value = '';
+            document.getElementById('em-rdp-domain').value = '';
+            document.getElementById('em-rdp-security').value = '';
+            document.getElementById('em-rdp-ignore-cert').checked = false;
+            document.getElementById('em-url').value = '';
+            document.getElementById('em-enable-drive').checked = false;
+        }
+
+        function openEditEntry(name, scope, folder, type) {
+            entryEditMode = { scope: scope, folder: folder, name: name };
+            document.getElementById('entry-modal-title').textContent = 'Edit: ' + name;
+            document.getElementById('em-name').value = name;
+            document.getElementById('em-name').disabled = true;
+            document.getElementById('em-display-name').value = '';
+            document.getElementById('em-error').textContent = '';
+            clearEntryFields();
+
+            // Pre-select the type from the table data
+            if (type) {
+                entryTypeSelect.value = type;
+                entryTypeSelect.disabled = true;
+                entryTypeSelect.dispatchEvent(new Event('change'));
+            }
+
+            // Populate move-to-folder dropdown
+            var moveSelect = document.getElementById('em-move-target');
+            moveSelect.innerHTML = '<option value="">(keep in current folder)</option>';
+            folders.forEach(function(f) {
+                if (f.name !== folder || f.scope !== scope) {
+                    var opt = document.createElement('option');
+                    opt.value = f.scope + '/' + f.name;
+                    opt.textContent = f.name + ' (' + f.scope + ')';
+                    moveSelect.appendChild(opt);
+                }
+            });
+            document.getElementById('em-move-section').style.display = folders.length > 1 ? '' : 'none';
+
+            // Pre-fill with existing entry data from the loaded entries
+            var entryData = null;
+            for (var i = 0; i < currentEntries.length; i++) {
+                if (currentEntries[i].name === name) {
+                    entryData = currentEntries[i];
+                    break;
+                }
+            }
+            if (entryData) {
+                if (entryData.display_name && entryData.display_name !== name) {
+                    document.getElementById('em-display-name').value = entryData.display_name;
+                }
+                if (type === 'ssh') {
+                    document.getElementById('em-hostname').value = entryData.hostname || '';
+                    document.getElementById('em-port').value = entryData.port || '22';
+                    document.getElementById('em-username').value = entryData.username || '';
+                } else if (type === 'rdp') {
+                    document.getElementById('em-rdp-hostname').value = entryData.hostname || '';
+                    document.getElementById('em-rdp-port').value = entryData.port || '3389';
+                    document.getElementById('em-rdp-username').value = entryData.username || '';
+                    document.getElementById('em-rdp-domain').value = entryData.domain || '';
+                    if (entryData.security) {
+                        document.getElementById('em-rdp-security').value = entryData.security;
+                    }
+                    document.getElementById('em-rdp-ignore-cert').checked = !!entryData.ignore_cert;
+                } else if (type === 'web') {
+                    document.getElementById('em-url').value = entryData.url || '';
+                }
+                if (type === 'ssh' || type === 'rdp') {
+                    document.getElementById('em-enable-drive').checked = !!entryData.enable_drive;
+                }
+            }
+
+            document.getElementById('entry-modal').classList.add('active');
+        }
+
+        document.getElementById('em-cancel').addEventListener('click', function() {
+            document.getElementById('entry-modal').classList.remove('active');
+            entryTypeSelect.disabled = false;
+        });
+
+        document.getElementById('em-save').addEventListener('click', function() {
+            var name = document.getElementById('em-name').value.trim();
+            var displayName = document.getElementById('em-display-name').value.trim();
+            var type = entryTypeSelect.value;
+            var errEl = document.getElementById('em-error');
+
+            if (!name || !/^[a-zA-Z0-9_.-]+$/.test(name)) {
+                errEl.textContent = 'Name must be alphanumeric, hyphens, underscores, dots only.';
+                return;
+            }
+
+            var entry = { type: type };
+            if (displayName) entry.display_name = displayName;
+
+            if (type === 'ssh') {
+                var h = document.getElementById('em-hostname').value.trim();
+                if (h) entry.hostname = h;
+                var p = parseInt(document.getElementById('em-port').value);
+                if (p) entry.port = p;
+                var u = document.getElementById('em-username').value.trim();
+                if (u) entry.username = u;
+                var pw = document.getElementById('em-password').value;
+                if (pw) entry.password = pw;
+                var pk = document.getElementById('em-private-key').value.trim();
+                if (pk) entry.private_key = pk;
+            } else if (type === 'rdp') {
+                var h = document.getElementById('em-rdp-hostname').value.trim();
+                if (h) entry.hostname = h;
+                var p = parseInt(document.getElementById('em-rdp-port').value);
+                if (p) entry.port = p;
+                var u = document.getElementById('em-rdp-username').value.trim();
+                if (u) entry.username = u;
+                var pw = document.getElementById('em-rdp-password').value;
+                if (pw) entry.password = pw;
+                var dom = document.getElementById('em-rdp-domain').value.trim();
+                if (dom) entry.domain = dom;
+                var sec = document.getElementById('em-rdp-security').value;
+                if (sec) entry.security = sec;
+                entry.ignore_cert = document.getElementById('em-rdp-ignore-cert').checked;
+            } else if (type === 'web') {
+                var url = document.getElementById('em-url').value.trim();
+                if (url) entry.url = url;
+            }
+
+            // Drive setting for SSH and RDP
+            if (type === 'ssh' || type === 'rdp') {
+                entry.enable_drive = document.getElementById('em-enable-drive').checked;
+            }
+
+            errEl.textContent = '';
+            var scope = selectedFolder.scope;
+            var folder = selectedFolder.name;
+
+            var saveBtn = document.getElementById('em-save');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+
+            // Check if we need to move the entry
+            var moveTarget = document.getElementById('em-move-target').value;
+
+            if (entryEditMode) {
+                // Update existing entry
+                var updatePromise = fetch('/api/addressbook/folders/' + encodeURIComponent(entryEditMode.scope) + '/' + encodeURIComponent(entryEditMode.folder) + '/entries/' + encodeURIComponent(entryEditMode.name), {
+                    method: 'PUT',
+                    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify(entry)
+                })
+                .then(function(res) {
+                    if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                    return res.json();
+                });
+
+                updatePromise.then(function() {
+                    if (moveTarget) {
+                        // Move = create in new folder + delete from old
+                        var parts = moveTarget.split('/');
+                        var targetScope = parts[0];
+                        var targetFolder = parts.slice(1).join('/');
+                        var body = { name: entryEditMode.name };
+                        for (var k in entry) body[k] = entry[k];
+
+                        return fetch('/api/addressbook/folders/' + encodeURIComponent(targetScope) + '/' + encodeURIComponent(targetFolder) + '/entries', {
+                            method: 'POST',
+                            headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                            credentials: 'same-origin',
+                            body: JSON.stringify(body)
+                        }).then(function(res) {
+                            if (!res.ok) return res.text().then(function(t) { throw new Error('Move failed: ' + t); });
+                            // Delete from original folder
+                            return fetch('/api/addressbook/folders/' + encodeURIComponent(entryEditMode.scope) + '/' + encodeURIComponent(entryEditMode.folder) + '/entries/' + encodeURIComponent(entryEditMode.name), {
+                                method: 'DELETE',
+                                headers: apiHeaders(),
+                                credentials: 'same-origin'
+                            });
+                        }).then(function() {
+                            // Switch to the target folder
+                            selectedFolder = folders.find(function(f) { return f.scope === targetScope && f.name === targetFolder; }) || selectedFolder;
+                        });
+                    }
+                })
+                .then(function() {
+                    document.getElementById('entry-modal').classList.remove('active');
+                    entryTypeSelect.disabled = false;
+                    loadEntries(selectedFolder.scope, selectedFolder.name);
+                })
+                .catch(function(err) { errEl.textContent = err.message; })
+                .finally(function() { saveBtn.disabled = false; saveBtn.textContent = 'Save'; });
+            } else {
+                // Create new entry
+                var body = { name: name };
+                for (var k in entry) body[k] = entry[k];
+                fetch('/api/addressbook/folders/' + encodeURIComponent(scope) + '/' + encodeURIComponent(folder) + '/entries', {
+                    method: 'POST',
+                    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify(body)
+                })
+                .then(function(res) {
+                    if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                    document.getElementById('entry-modal').classList.remove('active');
+                    entryTypeSelect.disabled = false;
+                    loadEntries(scope, folder);
+                })
+                .catch(function(err) { errEl.textContent = err.message; })
+                .finally(function() { saveBtn.disabled = false; saveBtn.textContent = 'Save'; });
+            }
+        });
+
+        // Close modals on overlay click
+        document.querySelectorAll('.modal-overlay').forEach(function(el) {
+            el.addEventListener('click', function(e) {
+                if (e.target === el) {
+                    el.classList.remove('active');
+                    entryTypeSelect.disabled = false;
+                }
+            });
+        });
+
+        // Close modals on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.modal-overlay.active').forEach(function(el) {
+                    el.classList.remove('active');
+                    entryTypeSelect.disabled = false;
+                });
+            }
+        });
+
+        init();
+    </script>
+</body>
+</html>

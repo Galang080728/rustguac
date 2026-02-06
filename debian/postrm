@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+# Update shared library cache
+ldconfig
+
+# On purge, remove runtime data and user
+if [ "$1" = "purge" ]; then
+    rm -rf /opt/rustguac/data
+    rm -rf /opt/rustguac/recordings
+    rm -rf /opt/rustguac/tls
+    rm -rf /opt/rustguac
+    rm -f /etc/ld.so.conf.d/rustguac.conf
+    ldconfig
+
+    if getent passwd rustguac >/dev/null 2>&1; then
+        deluser --quiet --system rustguac || true
+    fi
+    if getent group rustguac >/dev/null 2>&1; then
+        delgroup --quiet --system rustguac || true
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0

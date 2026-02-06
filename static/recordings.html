@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>rustguac - Recordings</title>
+    <style>
+        :root { --primary: #e94560; --primary-hover: #c73652; --accent: #5bc0be; --accent-hover: #4aa3a1; --bg: #1a1a2e; --surface: #16213e; --input: #0f3460; --text: #e0e0e0; --text-muted: #aaa; --border: #333; }
+        body { font-family: monospace; background: var(--bg); color: var(--text); padding: 2em; font-size: 18px; }
+        h1 { color: var(--primary); }
+        a { color: var(--accent); }
+        nav { margin-bottom: 1.5em; font-size: 0.95em; }
+        nav a { margin-right: 1.5em; text-decoration: none; }
+        nav a:hover { text-decoration: underline; }
+        nav .active { color: var(--primary); font-weight: bold; }
+        nav .logout { color: #888; float: right; cursor: pointer; }
+        nav .logout:hover { color: var(--primary); }
+
+        table { border-collapse: collapse; width: 100%; max-width: 800px; }
+        th, td { text-align: left; padding: 0.4em 0.8em; border-bottom: 1px solid var(--border); }
+        th { color: var(--text-muted); font-size: 0.85em; }
+        .btn-small {
+            background: none; border: none; color: var(--accent);
+            cursor: pointer; font-family: monospace; padding: 0; font-size: 0.9em;
+        }
+        .btn-small:hover { text-decoration: underline; }
+        .btn-delete { color: var(--primary); }
+        .empty { color: #666; margin: 2em 0; }
+
+        #player-section {
+            display: none;
+            margin-top: 2em;
+            background: var(--surface);
+            border-radius: 6px;
+            padding: 1em;
+            max-width: 1100px;
+        }
+        #player-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5em;
+        }
+        #player-title { color: var(--text-muted); font-size: 0.9em; }
+        #player-close {
+            background: none; border: none; color: #888; cursor: pointer;
+            font-family: monospace; font-size: 1.1em;
+        }
+        #player-close:hover { color: var(--primary); }
+        #player-display {
+            background: #000;
+            overflow: auto;
+            max-height: 70vh;
+        }
+        #player-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.8em;
+            margin-top: 0.5em;
+            padding: 0.4em 0;
+        }
+        #play-btn {
+            background: var(--primary); color: #fff; border: none;
+            font-family: monospace; font-size: 0.9em; padding: 0.3em 1em;
+            border-radius: 3px; cursor: pointer; min-width: 60px;
+        }
+        #play-btn:hover { background: var(--primary-hover); }
+        #seek-container {
+            position: relative;
+            flex: 1;
+            height: 32px;
+        }
+        #histogram {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            border-radius: 3px;
+        }
+        #seek-slider {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 2;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            outline: none;
+            margin: 0;
+        }
+        #seek-slider::-webkit-slider-runnable-track {
+            height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+        }
+        #seek-slider::-moz-range-track {
+            height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+        }
+        #seek-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px; height: 12px;
+            background: var(--accent); border-radius: 50%; cursor: pointer;
+            margin-top: -4px;
+        }
+        #seek-slider::-moz-range-thumb {
+            width: 12px; height: 12px;
+            background: var(--accent); border-radius: 50%; cursor: pointer; border: none;
+        }
+        #player-time { color: var(--text-muted); font-size: 0.85em; white-space: nowrap; }
+    </style>
+
+    <!-- Guacamole JS modules (same as client.html) -->
+    <script src="/guac/Namespace.js"></script>
+    <script src="/guac/Client.js"></script>
+    <script src="/guac/Display.js"></script>
+    <script src="/guac/Event.js"></script>
+    <script src="/guac/InputSink.js"></script>
+    <script src="/guac/IntegerPool.js"></script>
+    <script src="/guac/Keyboard.js"></script>
+    <script src="/guac/KeyEventInterpreter.js"></script>
+    <script src="/guac/Layer.js"></script>
+    <script src="/guac/Mouse.js"></script>
+    <script src="/guac/Parser.js"></script>
+    <script src="/guac/Position.js"></script>
+    <script src="/guac/Status.js"></script>
+    <script src="/guac/Touch.js"></script>
+    <script src="/guac/Tunnel.js"></script>
+    <script src="/guac/UTF8Parser.js"></script>
+    <script src="/guac/InputStream.js"></script>
+    <script src="/guac/OutputStream.js"></script>
+    <script src="/guac/StringReader.js"></script>
+    <script src="/guac/StringWriter.js"></script>
+    <script src="/guac/ArrayBufferReader.js"></script>
+    <script src="/guac/ArrayBufferWriter.js"></script>
+    <script src="/guac/BlobReader.js"></script>
+    <script src="/guac/BlobWriter.js"></script>
+    <script src="/guac/DataURIReader.js"></script>
+    <script src="/guac/AudioContextFactory.js"></script>
+    <script src="/guac/AudioPlayer.js"></script>
+    <script src="/guac/AudioRecorder.js"></script>
+    <script src="/guac/VideoPlayer.js"></script>
+    <script src="/guac/JSONReader.js"></script>
+    <script src="/guac/Object.js"></script>
+    <script src="/guac/RawAudioFormat.js"></script>
+    <script src="/guac/SessionRecording.js"></script>
+</head>
+<body>
+    <img id="site-logo" src="/logo.svg" style="max-height:40px;vertical-align:middle;margin-right:0.5em" alt=""><h1 style="display:inline;vertical-align:middle">rustguac</h1>
+    <nav>
+        <a href="/addressbook.html">Address Book</a>
+        <a href="/sessions.html" id="sessions-link">Sessions</a>
+        <a href="/recordings.html" class="active">Recordings</a>
+        <a href="/docs.html">Docs</a>
+        <a href="/admin.html" id="admin-link" style="display:none">Admin</a>
+        <span class="logout" id="logout-btn">logout</span>
+    </nav>
+
+    <strong>Recordings</strong>
+    <div id="recording-list"></div>
+
+    <div id="player-section">
+        <div id="player-header">
+            <span id="player-title"></span>
+            <button id="player-close">&#x2715; close</button>
+        </div>
+        <div id="player-display"></div>
+        <div id="player-controls">
+            <button id="play-btn">Play</button>
+            <div id="seek-container">
+                <canvas id="histogram"></canvas>
+                <input type="range" id="seek-slider" min="0" max="1000" value="0">
+            </div>
+            <span id="player-time">0:00 / 0:00</span>
+        </div>
+    </div>
+
+    <script>
+        function applyTheme(theme) {
+            if (!theme) return;
+            var props = {primary_color:'--primary',primary_hover:'--primary-hover',accent_color:'--accent',accent_hover:'--accent-hover',bg_color:'--bg',surface_color:'--surface',input_color:'--input',text_color:'--text',text_muted:'--text-muted',border_color:'--border'};
+            var r = document.documentElement.style;
+            for (var k in props) { if (theme[k]) r.setProperty(props[k], theme[k]); }
+            if (theme.logo_url) { var logo = document.getElementById('site-logo'); if (logo) { logo.src = theme.logo_url; logo.style.display = ''; } }
+        }
+        fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
+            if(d.site_title){document.title=d.site_title+' - Recordings';document.querySelector('h1').textContent=d.site_title;}
+            applyTheme(d.theme);
+        });
+        var apiKey = sessionStorage.getItem('rustguac_api_key');
+
+        // Check auth: either API key or cookie
+        var roleLevel = { admin: 4, poweruser: 3, operator: 2, viewer: 1 };
+        if (apiKey) {
+            document.getElementById('admin-link').style.display = '';
+        } else {
+            fetch('/api/me', { credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) { window.location.href = '/'; return; }
+                return res.json();
+            })
+            .then(function(data) {
+                if (!data) return;
+                if (data.role === 'admin') document.getElementById('admin-link').style.display = '';
+                var level = roleLevel[data.role] || 0;
+                if (level < 3) {
+                    document.getElementById('sessions-link').style.display = 'none';
+                }
+            })
+            .catch(function() { window.location.href = '/'; });
+        }
+
+        document.getElementById('logout-btn').addEventListener('click', function() {
+            sessionStorage.removeItem('rustguac_api_key');
+            fetch('/auth/logout', { credentials: 'same-origin' })
+            .finally(function() { window.location.href = '/'; });
+        });
+
+        function apiHeaders() {
+            var h = {};
+            if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
+            return h;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        function formatTime(ms) {
+            var secs = Math.floor(ms / 1000);
+            var m = Math.floor(secs / 60);
+            var s = secs % 60;
+            return m + ':' + (s < 10 ? '0' : '') + s;
+        }
+
+        function refreshRecordings() {
+            fetch('/api/recordings', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) throw new Error('Failed to load recordings');
+                return res.json();
+            })
+            .then(function(recordings) {
+                var container = document.getElementById('recording-list');
+                if (recordings.length === 0) {
+                    container.innerHTML = '<p class="empty">No recordings yet. Recordings are created automatically when sessions connect.</p>';
+                    return;
+                }
+                var html = '<table><thead><tr><th>Name</th><th>Size</th><th>Date</th><th></th><th></th><th></th></tr></thead><tbody>';
+                recordings.forEach(function(r) {
+                    var date = r.modified ? new Date(r.modified).toLocaleString() : '';
+                    html += '<tr>' +
+                        '<td>' + r.name + '</td>' +
+                        '<td>' + formatBytes(r.size_bytes) + '</td>' +
+                        '<td>' + date + '</td>' +
+                        '<td><button class="btn-small" data-play="' + r.name + '">play</button></td>' +
+                        '<td><a class="btn-small" href="/api/recordings/' + encodeURIComponent(r.name) + '" download="' + r.name + '">download</a></td>' +
+                        '<td><button class="btn-small btn-delete" data-delete-rec="' + r.name + '">delete</button></td>' +
+                        '</tr>';
+                });
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            });
+        }
+
+        // Handle clicks on recording list
+        document.getElementById('recording-list').addEventListener('click', function(e) {
+            var playName = e.target.getAttribute('data-play');
+            if (playName) {
+                playRecording(playName);
+                return;
+            }
+            var deleteName = e.target.getAttribute('data-delete-rec');
+            if (deleteName) {
+                if (!confirm('Delete recording ' + deleteName + '?')) return;
+                fetch('/api/recordings/' + encodeURIComponent(deleteName), {
+                    method: 'DELETE',
+                    headers: apiHeaders(),
+                    credentials: 'same-origin'
+                }).then(function() {
+                    refreshRecordings();
+                    // Close player if this recording is playing
+                    if (document.getElementById('player-title').textContent === deleteName) {
+                        closePlayer();
+                    }
+                });
+            }
+        });
+
+        // Download link needs auth header — intercept clicks
+        document.getElementById('recording-list').addEventListener('click', function(e) {
+            if (e.target.tagName === 'A' && e.target.hasAttribute('download')) {
+                e.preventDefault();
+                var url = e.target.href;
+                var filename = e.target.getAttribute('download');
+                fetch(url, { headers: apiHeaders(), credentials: 'same-origin' })
+                .then(function(res) { return res.blob(); })
+                .then(function(blob) {
+                    var a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = filename;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                });
+            }
+        });
+
+        var currentRecording = null;
+
+        function closePlayer() {
+            if (currentRecording) {
+                currentRecording.pause();
+                currentRecording = null;
+            }
+            document.getElementById('player-display').innerHTML = '';
+            document.getElementById('player-section').style.display = 'none';
+            document.getElementById('play-btn').textContent = 'Play';
+            document.getElementById('seek-slider').value = 0;
+            document.getElementById('player-time').textContent = '0:00 / 0:00';
+        }
+
+        document.getElementById('player-close').addEventListener('click', closePlayer);
+
+        function playRecording(name) {
+            closePlayer();
+
+            document.getElementById('player-title').textContent = name;
+            document.getElementById('player-section').style.display = 'block';
+
+            var headers = {};
+            if (apiKey) headers['Authorization'] = 'Bearer ' + apiKey;
+            var tunnel = new Guacamole.StaticHTTPTunnel(
+                '/api/recordings/' + encodeURIComponent(name),
+                false,
+                headers
+            );
+            var recording = new Guacamole.SessionRecording(tunnel);
+            currentRecording = recording;
+
+            var displayEl = document.getElementById('player-display');
+            var playBtn = document.getElementById('play-btn');
+            var seekSlider = document.getElementById('seek-slider');
+            var timeEl = document.getElementById('player-time');
+
+            var display = recording.getDisplay();
+            displayEl.appendChild(display.getElement());
+
+            // Auto-scale VNC recordings to fit the player container
+            function scaleRecordingDisplay() {
+                var w = display.getWidth();
+                var h = display.getHeight();
+                if (w > 0 && h > 0) {
+                    var containerWidth = displayEl.clientWidth || 1080;
+                    var scale = Math.min(containerWidth / w, 1);
+                    display.scale(scale);
+                }
+            }
+            display.onresize = function() {
+                scaleRecordingDisplay();
+            };
+
+            var duration = 0;
+            var currentPos = 0;
+            var seeking = false;
+
+            function rebuildHistogram() {
+                var frameData = recording.getFrames();
+                if (!frameData.length || duration <= 0) return;
+
+                var canvas = document.getElementById('histogram');
+                var rect = canvas.parentElement.getBoundingClientRect();
+                canvas.width = rect.width * devicePixelRatio;
+                canvas.height = rect.height * devicePixelRatio;
+
+                var ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                var bucketCount = Math.min(Math.floor(rect.width / 2), 200);
+                if (bucketCount <= 0) return;
+                var buckets = new Array(bucketCount).fill(0);
+                var bucketDuration = duration / bucketCount;
+
+                for (var i = 0; i < frameData.length; i++) {
+                    var idx = Math.min(Math.floor(frameData[i].timestamp / bucketDuration), bucketCount - 1);
+                    if (idx >= 0) buckets[idx] += frameData[i].size;
+                }
+
+                var sorted = buckets.slice().sort(function(a, b) { return a - b; });
+                var maxVal = sorted[Math.floor(sorted.length * 0.95)] || 1;
+
+                var barWidth = canvas.width / bucketCount;
+                for (var i = 0; i < bucketCount; i++) {
+                    var h = Math.min(buckets[i] / maxVal, 1) * canvas.height * 0.85;
+                    ctx.fillStyle = 'rgba(91, 192, 190, 0.35)';
+                    ctx.fillRect(i * barWidth, canvas.height - h, barWidth - 0.5, h);
+                }
+            }
+
+            recording.onprogress = function(millis) {
+                duration = millis;
+                timeEl.textContent = formatTime(currentPos) + ' / ' + formatTime(duration);
+                rebuildHistogram();
+            };
+
+            recording.onplay = function() {
+                playBtn.textContent = 'Pause';
+            };
+
+            recording.onpause = function() {
+                playBtn.textContent = 'Play';
+            };
+
+            recording.onseek = function(position) {
+                currentPos = position;
+                if (!seeking && duration > 0) {
+                    seekSlider.value = Math.round((position / duration) * 1000);
+                }
+                timeEl.textContent = formatTime(position) + ' / ' + formatTime(duration);
+            };
+
+            playBtn.onclick = function() {
+                if (recording.isPlaying()) {
+                    recording.pause();
+                } else {
+                    recording.play();
+                }
+            };
+
+            seekSlider.addEventListener('mousedown', function() { seeking = true; });
+            seekSlider.addEventListener('mouseup', function() { seeking = false; });
+            seekSlider.addEventListener('input', function() {
+                if (duration > 0) {
+                    var target = (seekSlider.value / 1000) * duration;
+                    recording.seek(target);
+                }
+            });
+
+            // Connect to load the recording data, then auto-play
+            recording.connect();
+        }
+
+        refreshRecordings();
+        // Don't auto-refresh recordings as aggressively as sessions
+        setInterval(refreshRecordings, 15000);
+    </script>
+</body>
+</html>

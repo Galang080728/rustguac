@@ -1,0 +1,114 @@
+# Overview
+
+## What is rustguac?
+
+rustguac is a lightweight Rust replacement for the Apache Guacamole Java webapp. It provides browser-based remote access to SSH, RDP, and web browser sessions through [guacd](https://github.com/apache/guacamole-server), the Guacamole protocol daemon.
+
+rustguac sits between web browsers and guacd, proxying the Guacamole protocol over WebSockets. It manages session lifecycle, authentication, session recording, and an optional Vault-backed address book.
+
+## Why not Apache Guacamole?
+
+Apache Guacamole is a mature, feature-rich platform. rustguac is a purpose-built alternative for organisations that want:
+
+- **No Java stack** — rustguac is a single Rust binary. No Tomcat, no WAR files, no JVM tuning.
+- **Security-first design** — CIDR allowlists, TLS everywhere, LUKS-encrypted file transfer, Vault integration, rate limiting, audit logging.
+- **Simpler deployment** — one binary + guacd. Install with a single script or Docker image.
+- **Address book in Vault** — connection credentials stored in HashiCorp Vault / OpenBao KV v2. Credentials never reach the browser.
+- **Zero-trust integration** — works with [Knocknoc](https://knocknoc.io) for identity-aware network access control at the HAProxy layer.
+
+## Similarities to Apache Guacamole
+
+rustguac and Apache Guacamole share the same foundation:
+
+- **guacd** — both use guacd from [guacamole-server](https://github.com/apache/guacamole-server) for protocol translation. This is the same battle-tested C daemon.
+- **Guacamole protocol** — the wire protocol between the webapp and guacd is identical. rustguac uses the same instruction format, the same JavaScript client library (`guac-common-js`), and the same WebSocket framing.
+- **Session recording** — recordings are in the standard Guacamole format and can be played back with the bundled player.
+- **SSH/RDP/VNC support** — the same protocol backends provided by guacd.
+
+## Key differences from Apache Guacamole
+
+| Feature | Apache Guacamole | rustguac |
+|---------|-----------------|----------|
+| **Runtime** | Java (Tomcat + Spring) | Rust (single binary) |
+| **Database** | MySQL/PostgreSQL/LDAP | SQLite (embedded) |
+| **Credential storage** | Database tables | Vault KV v2 (server-side only) |
+| **Authentication** | LDAP, RADIUS, TOTP, SAML, database | OIDC SSO + API keys |
+| **Web sessions** | Not supported | Headless Chromium on Xvnc |
+| **Ephemeral SSH keys** | Not supported | Ed25519 keypair per session |
+| **File transfer encryption** | Not supported | LUKS + Vault key management |
+| **Network allowlists** | Not supported | CIDR allowlists per protocol |
+| **Rate limiting** | Not built-in | Per-IP, per-endpoint (tower_governor) |
+| **Reverse proxy integration** | Generic | HAProxy + Knocknoc examples |
+| **Session sharing** | Connection sharing | Share tokens (read-only or collaborative) |
+
+## Architecture
+
+```
+Browser (HTML/JS)
+    |
+    | WebSocket over HTTPS
+    v
+rustguac (Rust, axum)
+    |
+    | TLS (Guacamole protocol)
+    v
+guacd (C, from guacamole-server)
+    |
+    +---> SSH server (for SSH sessions)
+    +---> RDP server (for RDP sessions)
+    +---> Xvnc display (for web browser sessions)
+              |
+              +---> Chromium (kiosk mode)
+```
+
+Both links are encrypted by default: HTTPS between browsers and rustguac, TLS between rustguac and guacd.
+
+## Session types
+
+### SSH
+
+Connects guacd directly to a target SSH server. Supports password, private key, and ephemeral keypair authentication. Terminal rendering is handled by guacd's SSH plugin with `xterm-256color` terminal type.
+
+SFTP file transfer is available directly between the browser and the target SSH server (no files stored on the rustguac server).
+
+### RDP
+
+Connects guacd to a target RDP server. Supports username/password, domain, and various RDP settings (security mode, certificate ignore, display resize). Drive redirection provides file transfer via a per-session directory on the rustguac server.
+
+### Web browser
+
+Spawns a headless Xvnc display and Chromium in kiosk mode, then connects guacd via VNC to the local display. The user sees a full browser session in their own browser. Each session gets an isolated Chromium profile directory.
+
+## Ports
+
+| Port | Service |
+|------|---------|
+| 443 | rustguac HTTPS (default with TLS) |
+| 8089 | rustguac HTTP (when TLS is disabled) |
+| 4822 | guacd (TLS, loopback only) |
+| 6000-6099 | Xvnc displays (`:100`-`:199`, internal) |
+
+## Project structure
+
+```
+src/
+  main.rs          Entry point, CLI, server setup
+  api.rs           REST API endpoints
+  auth.rs          API key + OIDC session authentication middleware
+  browser.rs       Xvnc + Chromium process manager
+  config.rs        TOML config loading
+  db.rs            SQLite database (admins, OIDC users, sessions)
+  drive.rs         Drive / file transfer + LUKS lifecycle
+  guacd.rs         guacd TLS/TCP connection & protocol handshake
+  oidc.rs          OpenID Connect login flow
+  protocol.rs      Guacamole wire format parser
+  session.rs       Session state machine
+  vault.rs         Vault/OpenBao KV v2 client (AppRole auth)
+  websocket.rs     WebSocket <-> guacd proxy
+static/
+  *.html           Web UI pages
+  guac/            Guacamole JS client library
+docs/              This documentation
+patches/           guacd patches for FreeRDP 3.x
+scripts/           Utility scripts (drive-setup.sh)
+```

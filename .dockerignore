@@ -1,0 +1,10 @@
+target/
+.guacd-build/
+recordings/
+*.db
+*.db-journal
+*.db-wal
+config.local.toml
+.git/
+.idea/
+.vscode/

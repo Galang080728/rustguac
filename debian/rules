@@ -1,0 +1,63 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+# Everything is pre-built by build-deb.sh — no configure or build steps needed.
+override_dh_auto_configure:
+
+override_dh_auto_build:
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+	# Create directory structure
+	install -d debian/rustguac/opt/rustguac/bin
+	install -d debian/rustguac/opt/rustguac/sbin
+	install -d debian/rustguac/opt/rustguac/lib
+	install -d debian/rustguac/opt/rustguac/static
+	install -d debian/rustguac/opt/rustguac/static/guac
+	install -d debian/rustguac/opt/rustguac/data
+	install -d debian/rustguac/opt/rustguac/recordings
+	install -d debian/rustguac/opt/rustguac/tls
+	install -d debian/rustguac/etc/ld.so.conf.d
+
+	# rustguac binary
+	install -m 755 target/release/rustguac debian/rustguac/opt/rustguac/bin/rustguac
+
+	# Drive setup helper script
+	install -m 755 scripts/drive-setup.sh debian/rustguac/opt/rustguac/bin/drive-setup.sh
+
+	# guacd binary and libraries from staging
+	install -m 755 debian/staging/opt/rustguac/sbin/guacd debian/rustguac/opt/rustguac/sbin/guacd
+	cp -a debian/staging/opt/rustguac/lib/*.so* debian/rustguac/opt/rustguac/lib/
+
+	# FreeRDP plugin for RDPDR/RDPSND channels (drive redirection, audio, printing)
+	install -d debian/rustguac/usr/lib/x86_64-linux-gnu/freerdp3
+	cp -a debian/staging/usr/lib/x86_64-linux-gnu/freerdp3/*.so* debian/rustguac/usr/lib/x86_64-linux-gnu/freerdp3/ 2>/dev/null || true
+
+	# Static web assets
+	cp -r static/* debian/rustguac/opt/rustguac/static/
+
+	# Default config (marked as conffile)
+	install -m 644 debian/config.toml.default debian/rustguac/opt/rustguac/config.toml
+
+	# ldconfig drop-in so guacd can find its libs
+	echo "/opt/rustguac/lib" > debian/rustguac/etc/ld.so.conf.d/rustguac.conf
+
+override_dh_shlibdeps:
+	dh_shlibdeps -l/opt/rustguac/lib
+
+# dh_dwz fails on Rust binaries
+override_dh_dwz:
+
+# Don't generate separate debug symbol packages
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym
+
+# Install both systemd services
+override_dh_installsystemd:
+	dh_installsystemd --name=rustguac-guacd
+	dh_installsystemd --name=rustguac

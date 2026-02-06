@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+# Ensure data directories have correct ownership
+chown -R rustguac:rustguac /opt/rustguac/data
+chown -R rustguac:rustguac /opt/rustguac/recordings
+chown -R rustguac:rustguac /opt/rustguac/tls
+
+# Update shared library cache for guacd libs
+ldconfig
+
+echo ""
+echo "  To set up encrypted file transfer (LUKS drive), run:"
+echo "    sudo /opt/rustguac/bin/drive-setup.sh"
+echo ""
+
+#DEBHELPER#
+
+exit 0

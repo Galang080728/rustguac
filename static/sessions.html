@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>rustguac - Sessions</title>
+    <style>
+        :root { --primary: #e94560; --primary-hover: #c73652; --accent: #5bc0be; --accent-hover: #4aa3a1; --bg: #1a1a2e; --surface: #16213e; --input: #0f3460; --text: #e0e0e0; --text-muted: #aaa; --border: #333; }
+        body { font-family: monospace; background: var(--bg); color: var(--text); padding: 2em; font-size: 18px; }
+        h1 { color: var(--primary); }
+        h2 { color: var(--primary); font-size: 1em; margin-top: 2em; }
+        a { color: var(--accent); }
+        code { background: var(--surface); padding: 0.2em 0.5em; border-radius: 3px; }
+        nav { margin-bottom: 1.5em; font-size: 0.95em; }
+        nav a { margin-right: 1.5em; text-decoration: none; }
+        nav a:hover { text-decoration: underline; }
+        nav .active { color: var(--primary); font-weight: bold; }
+        nav .logout { color: #888; float: right; cursor: pointer; }
+        nav .logout:hover { color: var(--primary); }
+
+        form {
+            background: var(--surface);
+            padding: 1.5em;
+            border-radius: 6px;
+            max-width: 400px;
+            margin: 1.5em 0;
+        }
+        label { display: block; margin-top: 0.8em; color: var(--text-muted); font-size: 0.9em; }
+        input {
+            display: block;
+            width: 100%;
+            padding: 0.4em;
+            margin-top: 0.2em;
+            background: var(--input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: monospace;
+            font-size: 1em;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        input:focus { outline: none; border-color: var(--primary); }
+        button {
+            margin-top: 1.2em;
+            padding: 0.5em 1.5em;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            font-family: monospace;
+            font-size: 1em;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover { background: var(--primary-hover); }
+        button:disabled { background: #555; cursor: default; }
+        #error { color: var(--primary); margin-top: 0.8em; white-space: pre-wrap; }
+        #sessions { margin-top: 2em; }
+        #sessions table { border-collapse: collapse; width: 100%; }
+        #sessions th, #sessions td {
+            text-align: left; padding: 0.4em 0.8em; border-bottom: 1px solid var(--border);
+        }
+        #sessions th { color: var(--text-muted); font-size: 0.85em; }
+        #sessions a { text-decoration: none; }
+        #sessions a:hover { text-decoration: underline; }
+        .status-pending { color: #f0c040; }
+        .status-active { color: var(--accent); }
+        .status-completed { color: #888; }
+        .status-error { color: var(--primary); }
+        .status-expired { color: #666; }
+        .btn-small {
+            background: none; border: none; color: var(--primary);
+            cursor: pointer; font-family: monospace; padding: 0; font-size: 0.9em;
+        }
+        .btn-small:hover { text-decoration: underline; }
+        .btn-share { color: var(--accent); }
+        .share-url {
+            background: var(--input);
+            padding: 0.3em 0.6em;
+            border-radius: 3px;
+            font-size: 0.85em;
+            word-break: break-all;
+            display: none;
+            margin-top: 0.3em;
+        }
+    </style>
+</head>
+<body>
+    <img id="site-logo" src="/logo.svg" style="max-height:40px;vertical-align:middle;margin-right:0.5em" alt=""><h1 style="display:inline;vertical-align:middle">rustguac</h1>
+    <nav>
+        <a href="/addressbook.html">Address Book</a>
+        <a href="/sessions.html" class="active" id="sessions-link">Sessions</a>
+        <a href="/recordings.html">Recordings</a>
+        <a href="/docs.html">Docs</a>
+        <a href="/admin.html" id="admin-link" style="display:none">Admin</a>
+        <span class="logout" id="logout-btn">logout</span>
+    </nav>
+
+    <div id="adhoc-notice" style="display:none;background:var(--surface);padding:1em 1.5em;border-radius:6px;max-width:400px;margin:1.5em 0;color:var(--text-muted);">
+        Use the <a href="/addressbook.html">Address Book</a> to connect to saved entries.
+    </div>
+
+    <form id="session-form" style="display:none">
+        <strong>New Session</strong>
+        <label>Type
+            <select id="session-type" style="display:block;width:100%;padding:0.4em;margin-top:0.2em;background:var(--input);border:1px solid var(--border);color:var(--text);font-family:monospace;font-size:1em;border-radius:3px;">
+                <option value="ssh" selected>SSH</option>
+                <option value="rdp">RDP</option>
+                <option value="web">Web</option>
+            </select>
+        </label>
+        <div id="ssh-fields">
+            <label>Host
+                <input type="text" id="hostname" placeholder="192.168.1.1">
+            </label>
+            <label>Port
+                <input type="number" id="port" value="22">
+            </label>
+            <label>Username (optional — SSH will prompt if empty)
+                <input type="text" id="username">
+            </label>
+            <label>Password (optional — SSH will prompt if empty)
+                <input type="password" id="password">
+            </label>
+            <label style="margin-top:0.8em">
+                <input type="checkbox" id="generate-keypair" style="display:inline;width:auto;margin-right:0.4em"> Generate ephemeral SSH keypair
+            </label>
+            <div id="private-key-field">
+                <label>Private key (optional — paste OpenSSH PEM)
+                    <textarea id="private-key" rows="4" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" style="display:block;width:100%;padding:0.4em;margin-top:0.2em;background:var(--input);border:1px solid var(--border);color:var(--text);font-family:monospace;font-size:0.85em;border-radius:3px;box-sizing:border-box;resize:vertical;"></textarea>
+                </label>
+                <div style="color:var(--primary);font-size:0.8em;margin-top:0.3em;">Warning: Do not paste important production keys here. Use ephemeral or test keys only.</div>
+            </div>
+        </div>
+        <div id="rdp-fields" style="display:none">
+            <label>Host
+                <input type="text" id="rdp-hostname" placeholder="192.168.1.1">
+            </label>
+            <label>Port
+                <input type="number" id="rdp-port" value="3389">
+            </label>
+            <label>Username
+                <input type="text" id="rdp-username">
+            </label>
+            <label>Password
+                <input type="password" id="rdp-password">
+            </label>
+            <label>Domain (optional)
+                <input type="text" id="rdp-domain">
+            </label>
+            <label>Security
+                <select id="rdp-security" style="display:block;width:100%;padding:0.4em;margin-top:0.2em;background:var(--input);border:1px solid var(--border);color:var(--text);font-family:monospace;font-size:1em;border-radius:3px;">
+                    <option value="" selected>Default</option>
+                    <option value="tls">TLS</option>
+                    <option value="nla">NLA</option>
+                    <option value="rdp">RDP</option>
+                </select>
+            </label>
+            <label style="margin-top:0.8em">
+                <input type="checkbox" id="rdp-ignore-cert" style="display:inline;width:auto;margin-right:0.4em"> Ignore certificate errors
+            </label>
+        </div>
+        <div id="web-fields" style="display:none">
+            <label>URL
+                <input type="text" id="url" placeholder="https://example.com">
+            </label>
+        </div>
+        <label>Banner message (shown to user before session starts)
+            <input type="text" id="banner" placeholder="e.g. Please enter your credentials when prompted">
+        </label>
+        <button type="submit" id="connect-btn">Connect</button>
+        <div id="error"></div>
+    </form>
+
+    <div id="sessions">
+        <strong>Sessions</strong>
+        <table>
+            <thead><tr>
+                <th>ID</th><th>Type</th><th>Host</th><th>User</th><th>Owner</th><th>Status</th><th>Viewers</th><th></th><th></th><th></th>
+            </tr></thead>
+            <tbody id="session-list"></tbody>
+        </table>
+    </div>
+
+    <script>
+        function applyTheme(theme) {
+            if (!theme) return;
+            var props = {primary_color:'--primary',primary_hover:'--primary-hover',accent_color:'--accent',accent_hover:'--accent-hover',bg_color:'--bg',surface_color:'--surface',input_color:'--input',text_color:'--text',text_muted:'--text-muted',border_color:'--border'};
+            var r = document.documentElement.style;
+            for (var k in props) { if (theme[k]) r.setProperty(props[k], theme[k]); }
+            if (theme.logo_url) { var logo = document.getElementById('site-logo'); if (logo) { logo.src = theme.logo_url; logo.style.display = ''; } }
+        }
+        fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
+            if(d.site_title){document.title=d.site_title+' - Sessions';document.querySelector('h1').textContent=d.site_title;}
+            applyTheme(d.theme);
+        });
+        var apiKey = sessionStorage.getItem('rustguac_api_key');
+
+        // Check auth and role
+        var roleLevel = { admin: 4, poweruser: 3, operator: 2, viewer: 1 };
+        function checkRole() {
+            fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) { window.location.href = '/'; return; }
+                return res.json();
+            })
+            .then(function(data) {
+                if (!data) return;
+                var level = roleLevel[data.role] || 0;
+                if (level < 3) {
+                    window.location.href = '/addressbook.html';
+                    return;
+                }
+                if (data.role === 'admin') {
+                    document.getElementById('admin-link').style.display = '';
+                }
+                if (level >= 3) {
+                    // poweruser+ can create ad-hoc sessions
+                    document.getElementById('session-form').style.display = '';
+                }
+            })
+            .catch(function() { window.location.href = '/'; });
+        }
+        if (apiKey) {
+            // API key users are always admin
+            document.getElementById('session-form').style.display = '';
+            document.getElementById('admin-link').style.display = '';
+        } else {
+            checkRole();
+        }
+
+        document.getElementById('logout-btn').addEventListener('click', function() {
+            sessionStorage.removeItem('rustguac_api_key');
+            // Also clear server session cookie via logout endpoint
+            fetch('/auth/logout', { credentials: 'same-origin' })
+            .finally(function() { window.location.href = '/'; });
+        });
+
+        function apiHeaders(extra) {
+            var h = {};
+            if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
+            if (extra) { for (var k in extra) h[k] = extra[k]; }
+            return h;
+        }
+
+        var form = document.getElementById('session-form');
+        var errorEl = document.getElementById('error');
+        var btn = document.getElementById('connect-btn');
+        var sessionType = document.getElementById('session-type');
+        var sshFields = document.getElementById('ssh-fields');
+        var rdpFields = document.getElementById('rdp-fields');
+        var webFields = document.getElementById('web-fields');
+
+        var generateKeypair = document.getElementById('generate-keypair');
+        var privateKeyField = document.getElementById('private-key-field');
+        var passwordField = document.getElementById('password');
+
+        generateKeypair.addEventListener('change', function() {
+            if (generateKeypair.checked) {
+                privateKeyField.style.display = 'none';
+                passwordField.disabled = true;
+                passwordField.value = '';
+            } else {
+                privateKeyField.style.display = '';
+                passwordField.disabled = false;
+            }
+        });
+
+        sessionType.addEventListener('change', function() {
+            sshFields.style.display = 'none';
+            rdpFields.style.display = 'none';
+            webFields.style.display = 'none';
+            if (sessionType.value === 'ssh') sshFields.style.display = '';
+            else if (sessionType.value === 'rdp') rdpFields.style.display = '';
+            else if (sessionType.value === 'web') webFields.style.display = '';
+        });
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            errorEl.textContent = '';
+            btn.disabled = true;
+            btn.textContent = 'Connecting...';
+
+            var body = {};
+            if (sessionType.value === 'web') {
+                body.session_type = 'web';
+                body.url = document.getElementById('url').value;
+            } else if (sessionType.value === 'rdp') {
+                body.session_type = 'rdp';
+                body.hostname = document.getElementById('rdp-hostname').value;
+                body.port = parseInt(document.getElementById('rdp-port').value) || 3389;
+                var un = document.getElementById('rdp-username').value;
+                if (un) body.username = un;
+                var pw = document.getElementById('rdp-password').value;
+                if (pw) body.password = pw;
+                var dom = document.getElementById('rdp-domain').value;
+                if (dom) body.domain = dom;
+                var sec = document.getElementById('rdp-security').value;
+                if (sec) body.security = sec;
+                if (document.getElementById('rdp-ignore-cert').checked) body.ignore_cert = true;
+            } else {
+                body.session_type = 'ssh';
+                body.hostname = document.getElementById('hostname').value;
+                body.port = parseInt(document.getElementById('port').value) || 22;
+                var un = document.getElementById('username').value;
+                if (un) body.username = un;
+                if (document.getElementById('generate-keypair').checked) {
+                    body.generate_keypair = true;
+                } else {
+                    var pw = document.getElementById('password').value;
+                    if (pw) body.password = pw;
+                    var pk = document.getElementById('private-key').value.trim();
+                    if (pk) body.private_key = pk;
+                }
+            }
+            var banner = document.getElementById('banner').value;
+            if (banner) body.banner = banner;
+
+            fetch('/api/sessions', {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify(body),
+            })
+            .then(function(res) {
+                if (!res.ok) return res.text().then(function(t) { throw new Error(t); });
+                return res.json();
+            })
+            .then(function(data) {
+                window.open(data.client_url, '_blank');
+                refreshSessions();
+            })
+            .catch(function(err) {
+                errorEl.textContent = err.message;
+            })
+            .finally(function() {
+                btn.disabled = false;
+                btn.textContent = 'Connect';
+            });
+        });
+
+        var expandedShares = {};
+
+        function h(tag, text, attrs) {
+            var el = document.createElement(tag);
+            if (text != null) el.textContent = text;
+            if (attrs) for (var k in attrs) el.setAttribute(k, attrs[k]);
+            return el;
+        }
+
+        function refreshSessions() {
+            fetch('/api/sessions', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) throw new Error('auth');
+                return res.json();
+            })
+            .then(function(sessions) {
+                var tbody = document.getElementById('session-list');
+                tbody.innerHTML = '';
+                sessions.forEach(function(s) {
+                    var tr = document.createElement('tr');
+                    var shortId = s.session_id.substring(0, 8);
+                    var shareFullUrl = window.location.origin + s.share_url;
+                    var rowId = 'share-' + s.session_id;
+                    var hostCol = s.session_type === 'web' ? (s.url || '') : s.hostname;
+
+                    var tdId = document.createElement('td');
+                    var idLink = h('a', shortId, { href: s.client_url, target: '_blank' });
+                    tdId.appendChild(idLink);
+                    tr.appendChild(tdId);
+
+                    tr.appendChild(h('td', s.session_type));
+                    tr.appendChild(h('td', hostCol));
+                    tr.appendChild(h('td', s.username));
+                    tr.appendChild(h('td', s.created_by || ''));
+                    tr.appendChild(h('td', s.status, { 'class': 'status-' + s.status }));
+                    tr.appendChild(h('td', String(s.active_connections)));
+
+                    var tdOpen = document.createElement('td');
+                    tdOpen.appendChild(h('a', 'open', { href: s.client_url, target: '_blank' }));
+                    tr.appendChild(tdOpen);
+
+                    var tdShare = document.createElement('td');
+                    tdShare.appendChild(h('button', 'share', { 'class': 'btn-small btn-share', 'data-url': shareFullUrl, 'data-row': rowId }));
+                    tr.appendChild(tdShare);
+
+                    var tdDel = document.createElement('td');
+                    tdDel.appendChild(h('button', 'delete', { 'class': 'btn-small', 'data-delete': s.session_id }));
+                    tr.appendChild(tdDel);
+
+                    tbody.appendChild(tr);
+
+                    var shareTr = document.createElement('tr');
+                    shareTr.id = rowId;
+                    shareTr.style.display = expandedShares[rowId] ? '' : 'none';
+                    var shareTd = document.createElement('td');
+                    shareTd.colSpan = 10;
+                    var shareDiv = h('div', null, { 'class': 'share-url', style: 'display:block' });
+                    shareDiv.appendChild(h('span', shareFullUrl));
+                    shareDiv.appendChild(document.createTextNode(' '));
+                    shareDiv.appendChild(h('button', 'copy', { 'class': 'btn-small btn-copy', 'data-copy-url': shareFullUrl }));
+                    shareTd.appendChild(shareDiv);
+                    shareTr.appendChild(shareTd);
+                    tbody.appendChild(shareTr);
+                });
+            });
+        }
+
+        document.getElementById('session-list').addEventListener('click', function(e) {
+            if (e.target.getAttribute('data-delete')) {
+                var id = e.target.getAttribute('data-delete');
+                fetch('/api/sessions/' + id, { method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin' })
+                .then(function() { refreshSessions(); });
+            }
+            if (e.target.getAttribute('data-copy-url')) {
+                var url = e.target.getAttribute('data-copy-url');
+                var copyBtn = e.target;
+                function onCopied() {
+                    copyBtn.textContent = 'copied!';
+                    setTimeout(function() { copyBtn.textContent = 'copy'; }, 2000);
+                }
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(url).then(onCopied).catch(function() {
+                        // Fallback for insecure contexts
+                        var ta = document.createElement('textarea');
+                        ta.value = url;
+                        ta.style.position = 'fixed';
+                        ta.style.opacity = '0';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        onCopied();
+                    });
+                } else {
+                    var ta = document.createElement('textarea');
+                    ta.value = url;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    onCopied();
+                }
+                return;
+            }
+            if (e.target.classList.contains('btn-share')) {
+                var rowId = e.target.getAttribute('data-row');
+                var row = document.getElementById(rowId);
+                if (row) {
+                    var show = row.style.display === 'none';
+                    row.style.display = show ? '' : 'none';
+                    expandedShares[rowId] = show;
+                }
+            }
+        });
+
+        refreshSessions();
+        setInterval(refreshSessions, 5000);
+    </script>
+</body>
+</html>
