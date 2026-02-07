@@ -17,6 +17,7 @@ use openidconnect::{
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
 /// The concrete CoreClient type after from_provider_metadata + set_redirect_uri.
@@ -38,8 +39,9 @@ pub struct OidcState {
     pub config: OidcConfig,
     /// Auth session TTL in seconds.
     pub session_ttl_secs: u64,
-    /// Pending OIDC flows: state -> (pkce_verifier, nonce)
-    pub pending: Arc<Mutex<std::collections::HashMap<String, (PkceCodeVerifier, Nonce)>>>,
+    /// Pending OIDC flows: state -> (pkce_verifier, nonce, created_at)
+    pub pending:
+        Arc<Mutex<std::collections::HashMap<String, (PkceCodeVerifier, Nonce, Instant)>>>,
 }
 
 /// Initialize OIDC client by discovering provider metadata.
@@ -99,12 +101,13 @@ pub async fn login(State(oidc): State<OidcState>) -> Response {
 
     let (auth_url, csrf_token, nonce) = auth_request.url();
 
-    // Store PKCE verifier + nonce keyed by CSRF state
+    // Store PKCE verifier + nonce keyed by CSRF state, and evict stale entries
     let state_key = csrf_token.secret().clone();
-    oidc.pending
-        .lock()
-        .await
-        .insert(state_key.clone(), (pkce_verifier, nonce));
+    let mut pending = oidc.pending.lock().await;
+    let cutoff = Instant::now() - std::time::Duration::from_secs(600);
+    pending.retain(|_, (_, _, created)| *created > cutoff);
+    pending.insert(state_key.clone(), (pkce_verifier, nonce, Instant::now()));
+    drop(pending);
 
     // Set state in a cookie so we can verify on callback, then redirect
     let cookie = format!(
@@ -161,7 +164,7 @@ pub async fn callback(
 
     // Retrieve and remove the pending PKCE verifier
     let pending_entry = oidc.pending.lock().await.remove(&state);
-    let (pkce_verifier, nonce) = match pending_entry {
+    let (pkce_verifier, nonce, _created) = match pending_entry {
         Some(entry) => entry,
         None => {
             return (

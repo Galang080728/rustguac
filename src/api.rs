@@ -285,9 +285,7 @@ pub async fn serve_recording(
     State(manager): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    // Validate filename: must end in .guac and contain no path separators
-    if !name.ends_with(".guac") || name.contains('/') || name.contains('\\') || name.contains("..")
-    {
+    if !is_safe_recording_name(&name, manager.recording_path()) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "invalid recording name"})),
@@ -338,8 +336,7 @@ pub async fn delete_recording(
         }
     }
 
-    if !name.ends_with(".guac") || name.contains('/') || name.contains('\\') || name.contains("..")
-    {
+    if !is_safe_recording_name(&name, manager.recording_path()) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "invalid recording name"})),
@@ -356,6 +353,24 @@ pub async fn delete_recording(
             Json(json!({"error": "recording not found"})),
         )
             .into_response(),
+    }
+}
+
+/// Validate a recording filename: must end in .guac, no path separators,
+/// and the resolved path must stay within the recording directory.
+fn is_safe_recording_name(name: &str, recording_dir: &std::path::Path) -> bool {
+    if !name.ends_with(".guac")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return false;
+    }
+    // Belt-and-suspenders: verify canonical path is within recording dir
+    let full = recording_dir.join(name);
+    match (full.canonicalize(), recording_dir.canonicalize()) {
+        (Ok(resolved), Ok(base)) => resolved.starts_with(&base),
+        _ => true, // file may not exist yet; string checks above are sufficient
     }
 }
 

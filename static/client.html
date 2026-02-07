@@ -447,6 +447,16 @@
                 }, 4000);
             }
 
+            function escapeHtml(s) {
+                var d = document.createElement('div');
+                d.textContent = s;
+                return d.innerHTML;
+            }
+
+            function escapeAttr(s) {
+                return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            }
+
             function fetchDirectoryListing(path) {
                 if (!filesystem) return;
                 tracing_log('Requesting directory listing for: ' + path);
@@ -496,7 +506,7 @@
                     var built = '';
                     for (var i = 0; i < parts.length; i++) {
                         built += '/' + parts[i];
-                        html += ' <span style="cursor:pointer;color:var(--accent);" data-path="' + built + '/">' + parts[i] + '</span>/';
+                        html += ' <span style="cursor:pointer;color:var(--accent);" data-path="' + escapeAttr(built) + '/">' + escapeHtml(parts[i]) + '</span>/';
                     }
                     fileBreadcrumb.innerHTML = html;
                     var spans = fileBreadcrumb.querySelectorAll('span[data-path]');
@@ -569,17 +579,17 @@
                     // For subdirectory browsing, use the streamName (full path)
                     var dirBrowsePath = dirs[d].streamName;
                     if (dirBrowsePath.charAt(dirBrowsePath.length - 1) !== '/') dirBrowsePath += '/';
-                    html += '<div class="fp-entry" data-path="' + dirBrowsePath + '" data-type="dir" style="padding:0.5em 1em;cursor:pointer;display:flex;align-items:center;gap:0.5em;border-bottom:1px solid var(--bg);">' +
+                    html += '<div class="fp-entry" data-path="' + escapeAttr(dirBrowsePath) + '" data-type="dir" style="padding:0.5em 1em;cursor:pointer;display:flex;align-items:center;gap:0.5em;border-bottom:1px solid var(--bg);">' +
                         '<span style="color:var(--accent);">&#x1F4C1;</span>' +
-                        '<span style="flex:1;color:var(--text);font-size:0.95em;">' + dirs[d].displayName + '</span>' +
+                        '<span style="flex:1;color:var(--text);font-size:0.95em;">' + escapeHtml(dirs[d].displayName) + '</span>' +
                         '</div>';
                 }
                 for (var fi = 0; fi < files.length; fi++) {
                     var filePath = files[fi].streamName;
-                    html += '<div class="fp-entry" data-path="' + filePath + '" data-type="file" style="padding:0.5em 1em;cursor:pointer;display:flex;align-items:center;gap:0.5em;border-bottom:1px solid var(--bg);">' +
+                    html += '<div class="fp-entry" data-path="' + escapeAttr(filePath) + '" data-type="file" style="padding:0.5em 1em;cursor:pointer;display:flex;align-items:center;gap:0.5em;border-bottom:1px solid var(--bg);">' +
                         '<span style="color:var(--text-muted);">&#x1F4C4;</span>' +
-                        '<span style="flex:1;color:var(--text);font-size:0.95em;">' + files[fi].displayName + '</span>' +
-                        '<button class="fp-dl" data-path="' + filePath + '" data-name="' + files[fi].displayName + '" style="padding:0.3em 0.6em;background:var(--input);color:var(--accent);border:1px solid var(--border);font-family:monospace;font-size:0.85em;border-radius:3px;cursor:pointer;">Download</button>' +
+                        '<span style="flex:1;color:var(--text);font-size:0.95em;">' + escapeHtml(files[fi].displayName) + '</span>' +
+                        '<button class="fp-dl" data-path="' + escapeAttr(filePath) + '" data-name="' + escapeAttr(files[fi].displayName) + '" style="padding:0.3em 0.6em;background:var(--input);color:var(--accent);border:1px solid var(--border);font-family:monospace;font-size:0.85em;border-radius:3px;cursor:pointer;">Download</button>' +
                         '</div>';
                 }
                 fileListEl.innerHTML = html;

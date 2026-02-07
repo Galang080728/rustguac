@@ -47,6 +47,10 @@ pub struct VaultConfig {
     /// Entries under `<base_path>/instance/<instance_name>/` are specific to this instance.
     /// If not set, only shared entries are used.
     pub instance_name: Option<String>,
+    /// Skip TLS certificate verification for the Vault connection.
+    /// Only use this for development with self-signed certificates.
+    #[serde(default)]
+    pub tls_skip_verify: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]

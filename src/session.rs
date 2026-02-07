@@ -673,12 +673,16 @@ impl SessionManager {
         Ok((stream, cancel))
     }
 
-    /// Validate a share token for a session.
+    /// Validate a share token for a session (constant-time comparison).
     pub async fn validate_share_token(&self, id: Uuid, token: &str) -> bool {
+        use sha2::{Digest, Sha256};
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(&id) {
             let session = session.lock().await;
-            session.share_token == token
+            // Compare SHA-256 hashes to avoid timing side-channel on token length/content
+            let expected = Sha256::digest(session.share_token.as_bytes());
+            let provided = Sha256::digest(token.as_bytes());
+            expected == provided
         } else {
             false
         }

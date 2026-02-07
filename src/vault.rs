@@ -134,8 +134,11 @@ pub struct VaultClient {
 impl VaultClient {
     /// Create a new Vault client and perform initial AppRole login.
     pub async fn new(config: &VaultConfig, secret_id: &str) -> Result<Self, VaultError> {
+        if config.tls_skip_verify {
+            tracing::warn!("Vault TLS certificate verification is DISABLED (tls_skip_verify = true)");
+        }
         let http = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true) // dev Vault instances often use self-signed
+            .danger_accept_invalid_certs(config.tls_skip_verify)
             .build()
             .map_err(|e| VaultError::Auth(format!("failed to create HTTP client: {}", e)))?;
 

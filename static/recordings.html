@@ -234,6 +234,16 @@
             return m + ':' + (s < 10 ? '0' : '') + s;
         }
 
+        function escapeHtml(s) {
+            var d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function escapeAttr(s) {
+            return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
         function refreshRecordings() {
             fetch('/api/recordings', { headers: apiHeaders(), credentials: 'same-origin' })
             .then(function(res) {
@@ -250,12 +260,12 @@
                 recordings.forEach(function(r) {
                     var date = r.modified ? new Date(r.modified).toLocaleString() : '';
                     html += '<tr>' +
-                        '<td>' + r.name + '</td>' +
+                        '<td>' + escapeHtml(r.name) + '</td>' +
                         '<td>' + formatBytes(r.size_bytes) + '</td>' +
                         '<td>' + date + '</td>' +
-                        '<td><button class="btn-small" data-play="' + r.name + '">play</button></td>' +
-                        '<td><a class="btn-small" href="/api/recordings/' + encodeURIComponent(r.name) + '" download="' + r.name + '">download</a></td>' +
-                        '<td><button class="btn-small btn-delete" data-delete-rec="' + r.name + '">delete</button></td>' +
+                        '<td><button class="btn-small" data-play="' + escapeAttr(r.name) + '">play</button></td>' +
+                        '<td><a class="btn-small" href="/api/recordings/' + encodeURIComponent(r.name) + '" download="' + escapeAttr(r.name) + '">download</a></td>' +
+                        '<td><button class="btn-small btn-delete" data-delete-rec="' + escapeAttr(r.name) + '">delete</button></td>' +
                         '</tr>';
                 });
                 html += '</tbody></table>';
