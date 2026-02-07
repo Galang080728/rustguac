@@ -31,6 +31,10 @@ type OidcClient = CoreClient<
     EndpointMaybeSet,
 >;
 
+/// Pending OIDC flow entry: PKCE verifier, nonce, and creation timestamp.
+type PendingFlows =
+    Arc<Mutex<std::collections::HashMap<String, (PkceCodeVerifier, Nonce, Instant)>>>;
+
 /// Shared OIDC state initialized once at startup.
 #[derive(Clone)]
 pub struct OidcState {
@@ -40,7 +44,7 @@ pub struct OidcState {
     /// Auth session TTL in seconds.
     pub session_ttl_secs: u64,
     /// Pending OIDC flows: state -> (pkce_verifier, nonce, created_at)
-    pub pending: Arc<Mutex<std::collections::HashMap<String, (PkceCodeVerifier, Nonce, Instant)>>>,
+    pub pending: PendingFlows,
 }
 
 /// Initialize OIDC client by discovering provider metadata.
