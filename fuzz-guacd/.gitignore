@@ -1,0 +1,8 @@
+fuzz_parser
+fuzz_parser_afl
+fuzz_parser_standalone
+corpus/
+findings/
+crash-*
+oom-*
+timeout-*
