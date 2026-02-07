@@ -157,12 +157,11 @@ pub async fn require_auth(
         let validate_ip = Some(ip);
         let db_clone = db.clone();
         let key_clone = key.clone();
-        let result =
-            tokio::task::spawn_blocking(move || {
-                db::validate_api_key(&db_clone, &key_clone, validate_ip)
-            })
-                .await
-                .unwrap_or(Err(AuthError::InvalidKey));
+        let result = tokio::task::spawn_blocking(move || {
+            db::validate_api_key(&db_clone, &key_clone, validate_ip)
+        })
+        .await
+        .unwrap_or(Err(AuthError::InvalidKey));
 
         match result {
             Ok(admin) => {
@@ -177,15 +176,14 @@ pub async fn require_auth(
                 // Not found in admins table — try user API tokens
                 let db_clone = db.clone();
                 let token_result =
-                    tokio::task::spawn_blocking(move || {
-                        db::validate_user_token(&db_clone, &key)
-                    })
+                    tokio::task::spawn_blocking(move || db::validate_user_token(&db_clone, &key))
                         .await
                         .unwrap_or(Err(AuthError::InvalidKey));
 
                 match token_result {
                     Ok((user, token_meta)) => {
-                        let effective_role = compute_effective_role(&user.role, &token_meta.max_role);
+                        let effective_role =
+                            compute_effective_role(&user.role, &token_meta.max_role);
                         tracing::debug!(email = %user.email, role = %effective_role, token = %token_meta.name, "User token authenticated");
                         let groups = user.groups_vec();
                         let mut request = request;
@@ -315,12 +313,11 @@ pub async fn optional_auth(
         let validate_ip = Some(ip);
         let db_clone = db.clone();
         let key_clone = key.clone();
-        let result =
-            tokio::task::spawn_blocking(move || {
-                db::validate_api_key(&db_clone, &key_clone, validate_ip)
-            })
-                .await
-                .unwrap_or(Err(AuthError::InvalidKey));
+        let result = tokio::task::spawn_blocking(move || {
+            db::validate_api_key(&db_clone, &key_clone, validate_ip)
+        })
+        .await
+        .unwrap_or(Err(AuthError::InvalidKey));
 
         match result {
             Ok(admin) => {
@@ -335,15 +332,14 @@ pub async fn optional_auth(
                 // Not found in admins table — try user API tokens
                 let db_clone = db.clone();
                 let token_result =
-                    tokio::task::spawn_blocking(move || {
-                        db::validate_user_token(&db_clone, &key)
-                    })
+                    tokio::task::spawn_blocking(move || db::validate_user_token(&db_clone, &key))
                         .await
                         .unwrap_or(Err(AuthError::InvalidKey));
 
                 match token_result {
                     Ok((user, token_meta)) => {
-                        let effective_role = compute_effective_role(&user.role, &token_meta.max_role);
+                        let effective_role =
+                            compute_effective_role(&user.role, &token_meta.max_role);
                         tracing::debug!(email = %user.email, role = %effective_role, token = %token_meta.name, "Optional auth: user token authenticated");
                         let groups = user.groups_vec();
                         let mut request = request;
