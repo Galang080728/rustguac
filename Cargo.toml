@@ -46,7 +46,7 @@ ipnetwork = "0.21"
 
 # TLS
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-rcgen = "0.13"
+rcgen = "0.14"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
