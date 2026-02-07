@@ -72,6 +72,55 @@ rustguac supports two parallel authentication paths. See [Roles and Access Contr
 - PKCE and nonce validation on every login flow
 - Works with any OIDC provider (Authentik, Keycloak, Okta, Azure AD, Google, etc.)
 
+### User API token authentication
+
+User API tokens provide OIDC users with long-lived API credentials for automation and scripting, without sharing their OIDC session or admin API keys.
+
+**Token format and storage:**
+
+- Tokens are 60 hex characters with a `rgu_` prefix (e.g., `rgu_a1b2c3...`)
+- Stored as SHA-256 hashes in SQLite — the plaintext token is shown once at creation and cannot be retrieved
+- The `rgu_` prefix allows secret scanners and log monitoring tools to identify leaked tokens
+- Token validation uses constant-time hash comparison (SHA-256 matching via SQLite query) to prevent timing attacks
+
+**Effective role computation:**
+
+When a user API token authenticates, the effective role is computed as `min(user_current_role, token_max_role)`. This means:
+- If an admin demotes a user from poweruser to operator, all their existing tokens are immediately restricted to operator-level access
+- The `max_role` cap on a token cannot grant more access than the user currently has
+- Role evaluation happens at authentication time, not at token creation time
+
+**Token lifecycle security:**
+
+| Control | Implementation |
+|---------|---------------|
+| Creation | poweruser+ self-service; admin can create for any user |
+| Revocation | immediate; hash deleted from database |
+| Expiry | optional ISO 8601 timestamp, checked at authentication time |
+| Disabled users | tokens for disabled users are automatically rejected |
+| User deletion | all tokens cascade-deleted when user is removed |
+| Cleanup | expired tokens are purged hourly by background task |
+
+**Attack surface and mitigations:**
+
+| Threat | Mitigation |
+|--------|-----------|
+| Token theft / leakage | `rgu_` prefix enables automated secret scanning; short token lifetime recommended; tokens can be revoked immediately |
+| Privilege escalation via token | effective role is always `min(user_role, max_role)` — demoting the user restricts all their tokens |
+| Brute-force token guessing | 240 bits of entropy (60 hex chars); rate limiting at 2 req/sec per IP |
+| Token abuse after user offboarding | user deletion cascade-deletes all tokens; disabling a user blocks all their tokens |
+| Lateral movement from stolen token | tokens inherit the user's identity — all actions are logged with the user's email and client IP |
+| Audit evasion | all token create/revoke/use events are logged in `token_audit_log` with IP addresses |
+
+**Audit logging:**
+
+All token operations are recorded in a dedicated `token_audit_log` table:
+- **created** — token creation (by self-service or admin), with max_role and expiry details
+- **revoked** — token revocation (by owner or admin), logged with revoker identity
+- **admin_revoked** — admin revocation of another user's token
+
+Audit logs are retained for 90 days and cleaned up hourly. Admins can view the log via the Admin UI or `GET /api/admin/token-audit`.
+
 ## Rate limiting
 
 Per-IP rate limiting is applied to all endpoints using `tower_governor`:
@@ -101,11 +150,13 @@ All responses include the following headers:
 
 rustguac logs security-relevant events via the `tracing` framework:
 
-- Authentication failures (API key and OIDC)
+- Authentication failures (API key, user token, and OIDC)
 - Session creation, connection, and termination
 - WebSocket connect/disconnect events
 - Admin operations (user management, key rotation)
 - Client IP addresses (resolved via trusted proxies)
+
+Additionally, user API token operations are logged to a persistent `token_audit_log` database table (see [User API token authentication](#user-api-token-authentication) above). This provides a queryable audit trail for token creation, revocation, and usage — retained for 90 days.
 
 ## Session security
 
@@ -152,6 +203,7 @@ trusted_proxies = ["127.0.0.1/32"]
 
 - **Vault credentials** — address book entries are read server-side from Vault. Connection passwords and private keys are never sent to the browser.
 - **API keys** — only the SHA-256 hash is stored. The plaintext key is shown once at creation and cannot be retrieved.
+- **User API tokens** — same SHA-256 hash storage as admin API keys. The `rgu_` prefix enables secret scanning. Plaintext shown once at creation only.
 - **OIDC client secret** — can be provided via `OIDC_CLIENT_SECRET` environment variable instead of the config file.
 - **LUKS encryption key** — stored in Vault, passed to cryptsetup via stdin (never on the command line or on disk).
 - **Ephemeral SSH keys** — the private key exists only in memory during the guacd handshake. It is never stored on disk or returned by the API.

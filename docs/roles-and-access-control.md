@@ -6,14 +6,16 @@ rustguac implements a 4-tier role hierarchy:
 
 | Role | Level | Description |
 |------|-------|-------------|
-| **admin** | 4 | Full access — manage users, address book, recordings, sessions, group mappings |
-| **poweruser** | 3 | Ad-hoc session creation + address book connect |
-| **operator** | 2 | Address book connect only (no ad-hoc sessions) |
-| **viewer** | 1 | Read-only — view sessions and recordings |
+| **admin** | 4 | Full access — manage users, address book, recordings, sessions, group mappings, all API tokens |
+| **poweruser** | 3 | Ad-hoc session creation + address book connect + self-service API tokens |
+| **operator** | 2 | Address book connect only (no ad-hoc sessions); can view own API tokens |
+| **viewer** | 1 | Read-only — view sessions and recordings; no API token access |
 
 Roles are hierarchical: each role includes all permissions of lower roles. For example, a poweruser can do everything an operator can, plus create ad-hoc sessions.
 
 ## Authentication paths
+
+rustguac supports three authentication methods, tried in order: admin API key, user API token, OIDC session cookie.
 
 ### API key admins
 
@@ -28,6 +30,10 @@ rustguac add-admin --name ci-bot \
   --allowed-ips "10.0.0.0/8,192.168.1.0/24" \
   --expires "2026-12-31T00:00:00Z"
 ```
+
+### User API tokens
+
+User API tokens authenticate as the OIDC user who owns the token, with an effective role capped by the token's `max_role`. Tokens use the same `Authorization: Bearer <token>` header as admin API keys — rustguac tries admin keys first, then user tokens. See [User API tokens](#user-api-tokens) below for details.
 
 ### OIDC users
 
@@ -90,6 +96,25 @@ OIDC users are assigned a role through three mechanisms (in order of precedence)
 | `PUT /api/admin/group-mappings/:id` | admin |
 | `DELETE /api/admin/group-mappings/:id` | admin |
 
+### User API tokens (self-service)
+
+| Endpoint | Required role | Notes |
+|----------|--------------|-------|
+| `POST /api/me/tokens` | poweruser | Create a personal API token |
+| `GET /api/me/tokens` | operator | List own tokens (metadata only) |
+| `DELETE /api/me/tokens/:id` | poweruser | Revoke own token |
+
+Operators can view their tokens (created by an admin on their behalf) but cannot create or revoke them.
+
+### User API tokens (admin)
+
+| Endpoint | Required role | Notes |
+|----------|--------------|-------|
+| `POST /api/admin/user-tokens` | admin | Create token for any user |
+| `GET /api/admin/user-tokens` | admin | List all user tokens |
+| `DELETE /api/admin/user-tokens/:id` | admin | Revoke any user token |
+| `GET /api/admin/token-audit` | admin | View token audit log |
+
 ### Public endpoints
 
 | Endpoint | Auth required | Notes |
@@ -133,6 +158,39 @@ Admins can configure automatic role assignment based on OIDC group membership. T
 | `support` | operator |
 
 A user with groups `["engineering", "support"]` would get `poweruser` (the higher of the two matching roles).
+
+## User API tokens
+
+User API tokens allow OIDC users to authenticate via bearer token for automation and scripting (e.g., creating ad-hoc sessions via CI/CD, or integrating with monitoring tools).
+
+### Who can create tokens
+
+| User role | Self-service | Admin creates for them |
+|-----------|-------------|----------------------|
+| admin | Yes | Yes |
+| poweruser | Yes | Yes |
+| operator | No | Yes |
+| viewer | No | No |
+
+The primary use case is powerusers creating tokens for service account automation, and admins creating tokens for select operators who need API access.
+
+### Effective role
+
+Each token has an optional `max_role` cap. When the token is used to authenticate, the effective role is:
+
+```
+effective_role = min(user_current_role, token_max_role)
+```
+
+This means:
+- A poweruser who creates a token with `max_role: operator` gets operator-level access when using that token
+- If an admin later demotes the user to operator, the token's effective access drops accordingly
+- The `max_role` can never grant more access than the user currently has
+
+### Token management UI
+
+- **Tokens page** (`/tokens.html`) — self-service for powerusers and admins to create, view, and revoke their own tokens. Operators can view tokens created for them.
+- **Admin page** (`/admin.html`) — admins can create tokens for any user, view all tokens across all users, revoke any token, and view the audit log.
 
 ## User management CLI
 

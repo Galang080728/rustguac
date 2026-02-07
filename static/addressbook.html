@@ -150,6 +150,7 @@
         <a href="/sessions.html" id="sessions-link">Sessions</a>
         <a href="/recordings.html">Recordings</a>
         <a href="/docs.html">Docs</a>
+        <a href="/tokens.html" id="tokens-link" style="display:none">Tokens</a>
         <a href="/admin.html" id="admin-link" style="display:none">Admin</a>
         <span class="logout" id="logout-btn">logout</span>
     </nav>
@@ -383,8 +384,12 @@
                     var els = document.querySelectorAll('.admin-only');
                     for (var i = 0; i < els.length; i++) els[i].style.display = '';
                 }
+                if (level >= 2) {
+                    document.getElementById('tokens-link').style.display = '';
+                }
                 if (apiKey) {
                     document.getElementById('admin-link').style.display = '';
+                    document.getElementById('tokens-link').style.display = '';
                 }
                 if (!data.vault_enabled) {
                     if (data.vault_configured) {

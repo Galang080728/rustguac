@@ -44,10 +44,28 @@
             background: var(--surface); padding: 1em 1.5em; border-radius: 6px;
             display: inline-flex; gap: 0.8em; align-items: center; margin-top: 0.8em;
         }
+        input[type="date"] {
+            background: var(--input); border: 1px solid var(--border); color: var(--text);
+            font-family: monospace; font-size: 0.9em; padding: 0.3em 0.5em; border-radius: 3px;
+        }
+        input[type="date"]:focus { outline: none; border-color: var(--primary); }
         .disabled-row { opacity: 0.5; }
         .status-active { color: var(--accent); }
         .status-disabled { color: var(--primary); }
+        .status-expired { color: #666; }
         #error { color: var(--primary); margin-top: 0.5em; }
+        .token-reveal {
+            background: var(--surface); padding: 1em 1.5em; border-radius: 6px;
+            margin-top: 1em; border: 1px solid var(--accent);
+        }
+        .token-reveal code {
+            background: var(--input); padding: 0.4em 0.8em; border-radius: 3px;
+            font-size: 0.85em; word-break: break-all; display: block; margin: 0.5em 0;
+            user-select: all;
+        }
+        .token-reveal .warning { color: var(--primary); font-size: 0.85em; margin-top: 0.5em; }
+        .audit-row { font-size: 0.9em; }
+        .audit-row td { padding: 0.3em 0.8em; }
     </style>
 </head>
 <body>
@@ -57,6 +75,7 @@
         <a href="/sessions.html" id="sessions-link">Sessions</a>
         <a href="/recordings.html">Recordings</a>
         <a href="/docs.html">Docs</a>
+        <a href="/tokens.html">Tokens</a>
         <a href="/admin.html" class="active">Admin</a>
         <span class="logout" id="logout-btn">logout</span>
     </nav>
@@ -87,6 +106,52 @@
         </select>
         <button class="btn-primary" id="add-mapping-btn">Add Mapping</button>
     </div>
+    <h2>User API Tokens</h2>
+    <p style="color:#888;font-size:0.85em;margin:0.3em 0;">Tokens issued to OIDC users for API access. Admins can create tokens for operators and revoke any token.</p>
+    <table id="tokens-table">
+        <thead><tr>
+            <th>User</th><th>Name</th><th>Max Role</th><th>Expires</th><th>Created</th><th>Last Used</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody id="tokens-body"></tbody>
+    </table>
+    <div id="no-tokens" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No user tokens.</div>
+    <h2 style="font-size:0.9em;">Create Token for User</h2>
+    <div class="add-form" id="admin-token-form">
+        <input type="text" id="token-email" placeholder="user@example.com" style="width:200px;">
+        <input type="text" id="token-name" placeholder="Token name">
+        <select id="token-max-role">
+            <option value="">No role cap</option>
+            <option value="viewer">viewer</option>
+            <option value="operator">operator</option>
+            <option value="poweruser">poweruser</option>
+            <option value="admin">admin</option>
+        </select>
+        <input type="date" id="token-expires" title="Expiry date (optional)">
+        <button class="btn-primary" id="admin-create-token-btn">Create</button>
+    </div>
+    <div id="admin-token-reveal" class="token-reveal" style="display:none">
+        <strong>Token created:</strong>
+        <code id="admin-token-plaintext"></code>
+        <div style="display:inline-flex;gap:0.8em;align-items:center;">
+            <button class="btn-small btn-action" id="admin-copy-token-btn">copy to clipboard</button>
+            <button class="btn-small" id="admin-dismiss-token-btn">dismiss</button>
+        </div>
+        <div class="warning">This token will not be shown again. Copy it now and give it to the user securely.</div>
+    </div>
+
+    <h2>Token Audit Log</h2>
+    <div style="margin-bottom:0.5em;">
+        <input type="text" id="audit-email-filter" placeholder="Filter by email" style="width:200px;">
+        <button class="btn-primary" id="audit-filter-btn" style="padding:0.3em 0.8em;">Filter</button>
+    </div>
+    <table id="audit-table">
+        <thead><tr>
+            <th>Time</th><th>User</th><th>Token</th><th>Action</th><th>IP</th><th>Details</th>
+        </tr></thead>
+        <tbody id="audit-body"></tbody>
+    </table>
+    <div id="no-audit" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No audit events.</div>
+
     <div id="error"></div>
 
     <script>
@@ -124,6 +189,8 @@
                 }
                 loadUsers();
                 loadMappings();
+                loadAllTokens();
+                loadAuditLog();
             })
             .catch(function() { window.location.href = '/'; });
         }
@@ -327,8 +394,200 @@
             .catch(function(){});
         });
 
+        // ── User API Tokens ──
+
+        function loadAllTokens() {
+            fetch('/api/admin/user-tokens', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) { return res.json(); })
+            .then(function(tokens) {
+                var tbody = document.getElementById('tokens-body');
+                tbody.innerHTML = '';
+
+                if (!tokens || tokens.length === 0) {
+                    document.getElementById('no-tokens').style.display = '';
+                    return;
+                }
+                document.getElementById('no-tokens').style.display = 'none';
+
+                tokens.forEach(function(t) {
+                    var tr = document.createElement('tr');
+                    var now = new Date().toISOString();
+                    var expired = t.expires_at && t.expires_at < now;
+                    if (t.disabled || expired) tr.className = 'disabled-row';
+
+                    tr.appendChild(td(t.email || ''));
+                    tr.appendChild(td(t.name));
+                    tr.appendChild(td(t.max_role || 'none'));
+                    tr.appendChild(td(t.expires_at ? t.expires_at.substring(0, 10) : 'never'));
+                    tr.appendChild(td(t.created_at ? t.created_at.substring(0, 10) : ''));
+                    tr.appendChild(td(t.last_used_at || 'never'));
+
+                    var statusTd = document.createElement('td');
+                    if (t.disabled) {
+                        statusTd.textContent = 'disabled';
+                        statusTd.className = 'status-disabled';
+                    } else if (expired) {
+                        statusTd.textContent = 'expired';
+                        statusTd.className = 'status-expired';
+                    } else {
+                        statusTd.textContent = 'active';
+                        statusTd.className = 'status-active';
+                    }
+                    tr.appendChild(statusTd);
+
+                    var actTd = document.createElement('td');
+                    var revokeBtn = document.createElement('button');
+                    revokeBtn.className = 'btn-small';
+                    revokeBtn.textContent = 'revoke';
+                    revokeBtn.addEventListener('click', (function(id, name, email) {
+                        return function() {
+                            if (!confirm('Revoke token "' + name + '" for ' + email + '?')) return;
+                            fetch('/api/admin/user-tokens/' + id, {
+                                method: 'DELETE',
+                                headers: apiHeaders(),
+                                credentials: 'same-origin'
+                            })
+                            .then(function(res) {
+                                if (!res.ok) return res.json().then(function(d) { showError(d.error); });
+                                loadAllTokens();
+                                loadAuditLog();
+                            });
+                        };
+                    })(t.id, t.name, t.email || ''));
+                    actTd.appendChild(revokeBtn);
+                    tr.appendChild(actTd);
+
+                    tbody.appendChild(tr);
+                });
+            })
+            .catch(function(e) { showError('Failed to load tokens'); });
+        }
+
+        document.getElementById('admin-create-token-btn').addEventListener('click', function() {
+            var email = document.getElementById('token-email').value.trim();
+            var name = document.getElementById('token-name').value.trim();
+            if (!email) { showError('User email is required'); return; }
+            if (!name) { showError('Token name is required'); return; }
+
+            var maxRole = document.getElementById('token-max-role').value || undefined;
+            var expiresInput = document.getElementById('token-expires').value;
+            var expiresAt = expiresInput ? expiresInput + 'T23:59:59Z' : undefined;
+
+            var body = { email: email, name: name };
+            if (maxRole) body.max_role = maxRole;
+            if (expiresAt) body.expires_at = expiresAt;
+
+            var btn = document.getElementById('admin-create-token-btn');
+            btn.disabled = true;
+
+            fetch('/api/admin/user-tokens', {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify(body)
+            })
+            .then(function(res) {
+                if (!res.ok) return res.json().then(function(d) { showError(d.error); throw new Error(); });
+                return res.json();
+            })
+            .then(function(data) {
+                document.getElementById('token-email').value = '';
+                document.getElementById('token-name').value = '';
+                document.getElementById('token-expires').value = '';
+                document.getElementById('token-max-role').value = '';
+
+                document.getElementById('admin-token-plaintext').textContent = data.token;
+                document.getElementById('admin-token-reveal').style.display = '';
+
+                loadAllTokens();
+                loadAuditLog();
+            })
+            .catch(function() {})
+            .finally(function() { btn.disabled = false; });
+        });
+
+        document.getElementById('admin-copy-token-btn').addEventListener('click', function() {
+            var token = document.getElementById('admin-token-plaintext').textContent;
+            var btn = document.getElementById('admin-copy-token-btn');
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(token).then(function() {
+                    btn.textContent = 'copied!';
+                    setTimeout(function() { btn.textContent = 'copy to clipboard'; }, 2000);
+                }).catch(function() {
+                    fallbackCopy(token, btn);
+                });
+            } else {
+                fallbackCopy(token, btn);
+            }
+        });
+
+        function fallbackCopy(text, btn) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            btn.textContent = 'copied!';
+            setTimeout(function() { btn.textContent = 'copy to clipboard'; }, 2000);
+        }
+
+        document.getElementById('admin-dismiss-token-btn').addEventListener('click', function() {
+            document.getElementById('admin-token-reveal').style.display = 'none';
+            document.getElementById('admin-token-plaintext').textContent = '';
+        });
+
+        // ── Token Audit Log ──
+
+        function loadAuditLog(emailFilter) {
+            var url = '/api/admin/token-audit?limit=50';
+            if (emailFilter) url += '&email=' + encodeURIComponent(emailFilter);
+
+            fetch(url, { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) { return res.json(); })
+            .then(function(entries) {
+                var tbody = document.getElementById('audit-body');
+                tbody.innerHTML = '';
+
+                if (!entries || entries.length === 0) {
+                    document.getElementById('no-audit').style.display = '';
+                    return;
+                }
+                document.getElementById('no-audit').style.display = 'none';
+
+                entries.forEach(function(e) {
+                    var tr = document.createElement('tr');
+                    tr.className = 'audit-row';
+                    tr.appendChild(td(e.created_at || ''));
+                    tr.appendChild(td(e.user_email || ''));
+                    tr.appendChild(td(e.token_name || ''));
+                    tr.appendChild(td(e.action || ''));
+                    tr.appendChild(td(e.ip_addr || ''));
+
+                    var detailsTd = document.createElement('td');
+                    detailsTd.style.maxWidth = '200px';
+                    detailsTd.style.overflow = 'hidden';
+                    detailsTd.style.textOverflow = 'ellipsis';
+                    detailsTd.style.fontSize = '0.85em';
+                    detailsTd.textContent = e.details || '';
+                    detailsTd.title = e.details || '';
+                    tr.appendChild(detailsTd);
+
+                    tbody.appendChild(tr);
+                });
+            })
+            .catch(function() { showError('Failed to load audit log'); });
+        }
+
+        document.getElementById('audit-filter-btn').addEventListener('click', function() {
+            var email = document.getElementById('audit-email-filter').value.trim();
+            loadAuditLog(email || undefined);
+        });
+
         // Auto-refresh
-        setInterval(function() { loadUsers(); loadMappings(); }, 10000);
+        setInterval(function() { loadUsers(); loadMappings(); loadAllTokens(); }, 10000);
     </script>
 </body>
 </html>

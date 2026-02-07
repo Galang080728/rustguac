@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>rustguac - API Tokens</title>
+    <style>
+        :root { --primary: #e94560; --primary-hover: #c73652; --accent: #5bc0be; --accent-hover: #4aa3a1; --bg: #1a1a2e; --surface: #16213e; --input: #0f3460; --text: #e0e0e0; --text-muted: #aaa; --border: #333; }
+        body { font-family: monospace; background: var(--bg); color: var(--text); padding: 2em; font-size: 18px; }
+        h1 { color: var(--primary); }
+        h2 { color: var(--primary); font-size: 1em; margin-top: 2em; }
+        a { color: var(--accent); }
+        nav { margin-bottom: 1.5em; font-size: 0.95em; }
+        nav a { margin-right: 1.5em; text-decoration: none; }
+        nav a:hover { text-decoration: underline; }
+        nav .active { color: var(--primary); font-weight: bold; }
+        nav .logout { color: #888; float: right; cursor: pointer; }
+        nav .logout:hover { color: var(--primary); }
+
+        table { border-collapse: collapse; width: 100%; margin-top: 0.5em; }
+        th, td { text-align: left; padding: 0.4em 0.8em; border-bottom: 1px solid var(--border); }
+        th { color: var(--text-muted); font-size: 0.85em; }
+        .btn-small {
+            background: none; border: none; color: var(--primary);
+            cursor: pointer; font-family: monospace; padding: 0; font-size: 0.9em;
+        }
+        .btn-small:hover { text-decoration: underline; }
+        .btn-action { color: var(--accent); }
+        button.btn-primary {
+            padding: 0.4em 1.2em; background: var(--primary); color: #fff; border: none;
+            font-family: monospace; font-size: 0.9em; border-radius: 3px; cursor: pointer;
+        }
+        button.btn-primary:hover { background: var(--primary-hover); }
+        select {
+            background: var(--input); border: 1px solid var(--border); color: var(--text);
+            font-family: monospace; font-size: 0.9em; padding: 0.2em 0.4em; border-radius: 3px;
+        }
+        select:focus { outline: none; border-color: var(--primary); }
+        input[type="text"], input[type="date"] {
+            background: var(--input); border: 1px solid var(--border); color: var(--text);
+            font-family: monospace; font-size: 0.9em; padding: 0.3em 0.5em; border-radius: 3px;
+        }
+        input[type="text"]:focus, input[type="date"]:focus { outline: none; border-color: var(--primary); }
+        .add-form {
+            background: var(--surface); padding: 1em 1.5em; border-radius: 6px;
+            display: inline-flex; gap: 0.8em; align-items: center; margin-top: 0.8em;
+            flex-wrap: wrap;
+        }
+        .disabled-row { opacity: 0.5; }
+        .status-active { color: var(--accent); }
+        .status-disabled { color: var(--primary); }
+        .status-expired { color: #666; }
+        #error { color: var(--primary); margin-top: 0.5em; }
+        .token-reveal {
+            background: var(--surface); padding: 1em 1.5em; border-radius: 6px;
+            margin-top: 1em; border: 1px solid var(--accent);
+        }
+        .token-reveal code {
+            background: var(--input); padding: 0.4em 0.8em; border-radius: 3px;
+            font-size: 0.85em; word-break: break-all; display: block; margin: 0.5em 0;
+            user-select: all;
+        }
+        .token-reveal .warning { color: var(--primary); font-size: 0.85em; margin-top: 0.5em; }
+        .no-permission {
+            background: var(--surface); padding: 1.5em; border-radius: 6px;
+            color: var(--text-muted); margin-top: 1em; max-width: 500px;
+        }
+    </style>
+</head>
+<body>
+    <img id="site-logo" src="/logo.svg" style="max-height:40px;vertical-align:middle;margin-right:0.5em" alt=""><h1 style="display:inline;vertical-align:middle">rustguac</h1>
+    <nav>
+        <a href="/addressbook.html">Address Book</a>
+        <a href="/sessions.html" id="sessions-link">Sessions</a>
+        <a href="/recordings.html">Recordings</a>
+        <a href="/docs.html">Docs</a>
+        <a href="/tokens.html" class="active">Tokens</a>
+        <a href="/admin.html" id="admin-link" style="display:none">Admin</a>
+        <span class="logout" id="logout-btn">logout</span>
+    </nav>
+
+    <div id="loading">Loading...</div>
+    <div id="no-permission" class="no-permission" style="display:none">
+        Your role does not permit API token management. Contact an administrator if you need API access.
+    </div>
+
+    <div id="create-section" style="display:none">
+        <h2>Create Token</h2>
+        <div class="add-form" id="create-form">
+            <input type="text" id="token-name" placeholder="Token name">
+            <select id="token-max-role">
+                <option value="">No role cap</option>
+            </select>
+            <input type="date" id="token-expires" title="Expiry date (optional)">
+            <button class="btn-primary" id="create-btn">Create</button>
+        </div>
+        <div id="token-reveal" class="token-reveal" style="display:none">
+            <strong>Token created:</strong>
+            <code id="token-plaintext"></code>
+            <div style="display:inline-flex;gap:0.8em;align-items:center;">
+                <button class="btn-small btn-action" id="copy-token-btn">copy to clipboard</button>
+                <button class="btn-small" id="dismiss-token-btn">dismiss</button>
+            </div>
+            <div class="warning">This token will not be shown again. Copy it now.</div>
+        </div>
+    </div>
+
+    <div id="tokens-section" style="display:none">
+        <h2>Your Tokens</h2>
+        <table>
+            <thead><tr>
+                <th>Name</th><th>Max Role</th><th>Expires</th><th>Created</th><th>Last Used</th><th>Status</th><th></th>
+            </tr></thead>
+            <tbody id="tokens-body"></tbody>
+        </table>
+        <div id="no-tokens" style="display:none;color:var(--text-muted);margin-top:0.5em;">No tokens yet.</div>
+    </div>
+
+    <div id="error"></div>
+
+    <script>
+        function applyTheme(theme) {
+            if (!theme) return;
+            var props = {primary_color:'--primary',primary_hover:'--primary-hover',accent_color:'--accent',accent_hover:'--accent-hover',bg_color:'--bg',surface_color:'--surface',input_color:'--input',text_color:'--text',text_muted:'--text-muted',border_color:'--border'};
+            var r = document.documentElement.style;
+            for (var k in props) { if (theme[k]) r.setProperty(props[k], theme[k]); }
+            if (theme.logo_url) { var logo = document.getElementById('site-logo'); if (logo) { logo.src = theme.logo_url; logo.style.display = ''; } }
+        }
+        fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
+            if(d.site_title){document.title=d.site_title+' - API Tokens';document.querySelector('h1').textContent=d.site_title;}
+            applyTheme(d.theme);
+        });
+
+        var apiKey = sessionStorage.getItem('rustguac_api_key');
+        var roleLevel = { admin: 4, poweruser: 3, operator: 2, viewer: 1 };
+        var currentRole = '';
+        var canCreate = false;
+
+        function apiHeaders(extra) {
+            var h = {};
+            if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
+            if (extra) { for (var k in extra) h[k] = extra[k]; }
+            return h;
+        }
+
+        var errorEl = document.getElementById('error');
+        function showError(msg) { errorEl.textContent = msg; setTimeout(function(){ errorEl.textContent = ''; }, 5000); }
+
+        document.getElementById('logout-btn').addEventListener('click', function() {
+            sessionStorage.removeItem('rustguac_api_key');
+            fetch('/auth/logout', { credentials: 'same-origin' })
+            .finally(function() { window.location.href = '/'; });
+        });
+
+        function initPage() {
+            if (apiKey) {
+                // API key users are admins — redirect to admin page for token management
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('admin-link').style.display = '';
+                document.getElementById('no-permission').style.display = '';
+                document.getElementById('no-permission').textContent = 'API key admins manage user tokens via the Admin page.';
+                return;
+            }
+
+            fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) { window.location.href = '/'; return; }
+                return res.json();
+            })
+            .then(function(data) {
+                if (!data) return;
+                document.getElementById('loading').style.display = 'none';
+                currentRole = data.role;
+                var level = roleLevel[data.role] || 0;
+
+                if (data.role === 'admin') {
+                    document.getElementById('admin-link').style.display = '';
+                }
+
+                if (level < 2) {
+                    // viewer — no token access
+                    document.getElementById('no-permission').style.display = '';
+                    return;
+                }
+
+                // operator+ can see their tokens
+                document.getElementById('tokens-section').style.display = '';
+
+                if (level >= 3) {
+                    // poweruser+ can create and revoke tokens
+                    canCreate = true;
+                    document.getElementById('create-section').style.display = '';
+                    populateMaxRoles(data.role);
+                }
+
+                loadTokens();
+            })
+            .catch(function() { window.location.href = '/'; });
+        }
+
+        function populateMaxRoles(userRole) {
+            var sel = document.getElementById('token-max-role');
+            var roles = ['viewer', 'operator', 'poweruser', 'admin'];
+            var userLevel = roleLevel[userRole] || 0;
+            for (var i = 0; i < roles.length; i++) {
+                if (roleLevel[roles[i]] <= userLevel) {
+                    var opt = document.createElement('option');
+                    opt.value = roles[i];
+                    opt.textContent = roles[i];
+                    sel.appendChild(opt);
+                }
+            }
+        }
+
+        function loadTokens() {
+            fetch('/api/me/tokens', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) throw new Error('failed to load tokens');
+                return res.json();
+            })
+            .then(function(tokens) {
+                var tbody = document.getElementById('tokens-body');
+                tbody.innerHTML = '';
+
+                if (tokens.length === 0) {
+                    document.getElementById('no-tokens').style.display = '';
+                    return;
+                }
+                document.getElementById('no-tokens').style.display = 'none';
+
+                tokens.forEach(function(t) {
+                    var tr = document.createElement('tr');
+                    var now = new Date().toISOString();
+                    var expired = t.expires_at && t.expires_at < now;
+                    if (t.disabled || expired) tr.className = 'disabled-row';
+
+                    tr.appendChild(td(t.name));
+                    tr.appendChild(td(t.max_role || 'none'));
+                    tr.appendChild(td(t.expires_at ? t.expires_at.substring(0, 10) : 'never'));
+                    tr.appendChild(td(t.created_at ? t.created_at.substring(0, 10) : ''));
+                    tr.appendChild(td(t.last_used_at || 'never'));
+
+                    var statusTd = document.createElement('td');
+                    if (t.disabled) {
+                        statusTd.textContent = 'disabled';
+                        statusTd.className = 'status-disabled';
+                    } else if (expired) {
+                        statusTd.textContent = 'expired';
+                        statusTd.className = 'status-expired';
+                    } else {
+                        statusTd.textContent = 'active';
+                        statusTd.className = 'status-active';
+                    }
+                    tr.appendChild(statusTd);
+
+                    var actTd = document.createElement('td');
+                    if (canCreate) {
+                        var revokeBtn = document.createElement('button');
+                        revokeBtn.className = 'btn-small';
+                        revokeBtn.textContent = 'revoke';
+                        revokeBtn.addEventListener('click', (function(id, name) {
+                            return function() {
+                                if (!confirm('Revoke token "' + name + '"? This cannot be undone.')) return;
+                                fetch('/api/me/tokens/' + id, {
+                                    method: 'DELETE',
+                                    headers: apiHeaders(),
+                                    credentials: 'same-origin'
+                                })
+                                .then(function(res) {
+                                    if (!res.ok) return res.json().then(function(d) { showError(d.error); });
+                                    loadTokens();
+                                });
+                            };
+                        })(t.id, t.name));
+                        actTd.appendChild(revokeBtn);
+                    }
+                    tr.appendChild(actTd);
+
+                    tbody.appendChild(tr);
+                });
+            })
+            .catch(function(e) { showError(e.message); });
+        }
+
+        function td(text) {
+            var el = document.createElement('td');
+            el.textContent = text || '';
+            return el;
+        }
+
+        // Create token
+        document.getElementById('create-btn').addEventListener('click', function() {
+            var name = document.getElementById('token-name').value.trim();
+            if (!name) { showError('Token name is required'); return; }
+
+            var maxRole = document.getElementById('token-max-role').value || undefined;
+            var expiresInput = document.getElementById('token-expires').value;
+            var expiresAt = expiresInput ? expiresInput + 'T23:59:59Z' : undefined;
+
+            var body = { name: name };
+            if (maxRole) body.max_role = maxRole;
+            if (expiresAt) body.expires_at = expiresAt;
+
+            var btn = document.getElementById('create-btn');
+            btn.disabled = true;
+
+            fetch('/api/me/tokens', {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify(body)
+            })
+            .then(function(res) {
+                if (!res.ok) return res.json().then(function(d) { showError(d.error); throw new Error(); });
+                return res.json();
+            })
+            .then(function(data) {
+                document.getElementById('token-name').value = '';
+                document.getElementById('token-expires').value = '';
+                document.getElementById('token-max-role').value = '';
+
+                // Show the plaintext token
+                document.getElementById('token-plaintext').textContent = data.token;
+                document.getElementById('token-reveal').style.display = '';
+
+                loadTokens();
+            })
+            .catch(function() {})
+            .finally(function() { btn.disabled = false; });
+        });
+
+        // Copy token
+        document.getElementById('copy-token-btn').addEventListener('click', function() {
+            var token = document.getElementById('token-plaintext').textContent;
+            var copyBtn = document.getElementById('copy-token-btn');
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(token).then(function() {
+                    copyBtn.textContent = 'copied!';
+                    setTimeout(function() { copyBtn.textContent = 'copy to clipboard'; }, 2000);
+                }).catch(function() { fallbackCopy(token, copyBtn); });
+            } else {
+                fallbackCopy(token, copyBtn);
+            }
+        });
+
+        function fallbackCopy(text, btn) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            btn.textContent = 'copied!';
+            setTimeout(function() { btn.textContent = 'copy to clipboard'; }, 2000);
+        }
+
+        // Dismiss token reveal
+        document.getElementById('dismiss-token-btn').addEventListener('click', function() {
+            document.getElementById('token-reveal').style.display = 'none';
+            document.getElementById('token-plaintext').textContent = '';
+        });
+
+        initPage();
+        setInterval(function() {
+            if (document.getElementById('tokens-section').style.display !== 'none') {
+                loadTokens();
+            }
+        }, 10000);
+    </script>
+</body>
+</html>

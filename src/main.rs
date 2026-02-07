@@ -572,6 +572,16 @@ async fn run_server(config: Config, database: Db) {
                 Err(e) => tracing::warn!("Failed to clean up expired sessions: {}", e),
                 _ => {}
             }
+            match db::cleanup_expired_user_tokens(&cleanup_db) {
+                Ok(n) if n > 0 => tracing::info!("Cleaned up {} expired user API tokens", n),
+                Err(e) => tracing::warn!("Failed to clean up expired tokens: {}", e),
+                _ => {}
+            }
+            match db::cleanup_old_audit_log(&cleanup_db, 90) {
+                Ok(n) if n > 0 => tracing::info!("Cleaned up {} old audit log entries", n),
+                Err(e) => tracing::warn!("Failed to clean up audit log: {}", e),
+                _ => {}
+            }
         }
     });
 
@@ -666,6 +676,18 @@ async fn run_server(config: Config, database: Db) {
             delete(api::delete_group_mapping),
         )
         .route("/api/me", get(api::me))
+        // User API token self-service
+        .route("/api/me/tokens", get(api::list_my_tokens))
+        .route("/api/me/tokens", post(api::create_my_token))
+        .route("/api/me/tokens/{id}", delete(api::revoke_my_token))
+        // Admin token management
+        .route("/api/admin/user-tokens", get(api::admin_list_user_tokens))
+        .route("/api/admin/user-tokens", post(api::admin_create_user_token))
+        .route(
+            "/api/admin/user-tokens/{id}",
+            delete(api::admin_revoke_user_token),
+        )
+        .route("/api/admin/token-audit", get(api::admin_token_audit))
         // Address book routes
         .route("/api/addressbook/folders", get(api::ab_list_folders))
         .route("/api/addressbook/folders", post(api::ab_create_folder))

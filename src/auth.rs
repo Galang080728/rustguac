@@ -59,13 +59,22 @@ impl AuthIdentity {
 }
 
 /// Map role names to numeric levels for comparison.
-fn role_level(role: &str) -> u8 {
+pub fn role_level(role: &str) -> u8 {
     match role {
         "admin" => 4,
         "poweruser" => 3,
         "operator" => 2,
         "viewer" => 1,
         _ => 0,
+    }
+}
+
+/// Compute the effective role for a user API token.
+/// Returns the lower of the user's current role and the token's max_role cap.
+pub fn compute_effective_role(user_role: &str, max_role: &Option<String>) -> String {
+    match max_role {
+        Some(max) if role_level(max) < role_level(user_role) => max.clone(),
+        _ => user_role.to_string(),
     }
 }
 
@@ -147,37 +156,65 @@ pub async fn require_auth(
     if let Some(key) = api_key {
         let validate_ip = Some(ip);
         let db_clone = db.clone();
+        let key_clone = key.clone();
         let result =
-            tokio::task::spawn_blocking(move || db::validate_api_key(&db_clone, &key, validate_ip))
+            tokio::task::spawn_blocking(move || {
+                db::validate_api_key(&db_clone, &key_clone, validate_ip)
+            })
                 .await
                 .unwrap_or(Err(AuthError::InvalidKey));
 
-        return match result {
+        match result {
             Ok(admin) => {
                 tracing::debug!(admin = %admin.name, "API key authenticated");
                 let mut request = request;
                 request
                     .extensions_mut()
                     .insert(AuthIdentity::ApiKey(admin.name));
-                next.run(request).await
+                return next.run(request).await;
             }
             Err(AuthError::InvalidKey) => {
-                tracing::warn!(client_ip = %ip, "Authentication failed: invalid API key");
-                (
-                    StatusCode::UNAUTHORIZED,
-                    axum::Json(json!({"error": "invalid API key"})),
-                )
-                    .into_response()
+                // Not found in admins table — try user API tokens
+                let db_clone = db.clone();
+                let token_result =
+                    tokio::task::spawn_blocking(move || {
+                        db::validate_user_token(&db_clone, &key)
+                    })
+                        .await
+                        .unwrap_or(Err(AuthError::InvalidKey));
+
+                match token_result {
+                    Ok((user, token_meta)) => {
+                        let effective_role = compute_effective_role(&user.role, &token_meta.max_role);
+                        tracing::debug!(email = %user.email, role = %effective_role, token = %token_meta.name, "User token authenticated");
+                        let groups = user.groups_vec();
+                        let mut request = request;
+                        request.extensions_mut().insert(AuthIdentity::User {
+                            email: user.email,
+                            role: effective_role,
+                            groups,
+                        });
+                        return next.run(request).await;
+                    }
+                    Err(_) => {
+                        tracing::warn!(client_ip = %ip, "Authentication failed: invalid API key/token");
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            axum::Json(json!({"error": "invalid API key or token"})),
+                        )
+                            .into_response();
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!(client_ip = %ip, reason = %e, "Authentication failed");
-                (
+                return (
                     StatusCode::FORBIDDEN,
                     axum::Json(json!({"error": e.to_string()})),
                 )
-                    .into_response()
+                    .into_response();
             }
-        };
+        }
     }
 
     // Path 2: Session cookie
@@ -277,25 +314,57 @@ pub async fn optional_auth(
     if let Some(key) = api_key {
         let validate_ip = Some(ip);
         let db_clone = db.clone();
+        let key_clone = key.clone();
         let result =
-            tokio::task::spawn_blocking(move || db::validate_api_key(&db_clone, &key, validate_ip))
+            tokio::task::spawn_blocking(move || {
+                db::validate_api_key(&db_clone, &key_clone, validate_ip)
+            })
                 .await
                 .unwrap_or(Err(AuthError::InvalidKey));
 
-        return match result {
+        match result {
             Ok(admin) => {
                 tracing::debug!(admin = %admin.name, "Optional auth: API key authenticated");
                 let mut request = request;
                 request
                     .extensions_mut()
                     .insert(AuthIdentity::ApiKey(admin.name));
-                next.run(request).await
+                return next.run(request).await;
+            }
+            Err(AuthError::InvalidKey) => {
+                // Not found in admins table — try user API tokens
+                let db_clone = db.clone();
+                let token_result =
+                    tokio::task::spawn_blocking(move || {
+                        db::validate_user_token(&db_clone, &key)
+                    })
+                        .await
+                        .unwrap_or(Err(AuthError::InvalidKey));
+
+                match token_result {
+                    Ok((user, token_meta)) => {
+                        let effective_role = compute_effective_role(&user.role, &token_meta.max_role);
+                        tracing::debug!(email = %user.email, role = %effective_role, token = %token_meta.name, "Optional auth: user token authenticated");
+                        let groups = user.groups_vec();
+                        let mut request = request;
+                        request.extensions_mut().insert(AuthIdentity::User {
+                            email: user.email,
+                            role: effective_role,
+                            groups,
+                        });
+                        return next.run(request).await;
+                    }
+                    Err(_) => {
+                        tracing::warn!(client_ip = %ip, "Authentication failed: invalid API key/token (optional auth)");
+                        return next.run(request).await;
+                    }
+                }
             }
             Err(_) => {
-                tracing::warn!(client_ip = %ip, "Authentication failed: invalid API key (optional auth)");
-                next.run(request).await
+                tracing::warn!(client_ip = %ip, "Authentication failed: API key disabled/expired (optional auth)");
+                return next.run(request).await;
             }
-        };
+        }
     }
 
     // Path 2: Session cookie

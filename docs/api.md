@@ -228,6 +228,86 @@ Update a connection entry.
 
 Delete a connection entry.
 
+## User API Tokens (self-service)
+
+User API tokens allow OIDC users to authenticate via API key for automation and scripting. Tokens inherit the user's identity and are subject to role restrictions.
+
+### `POST /api/me/tokens`
+
+Create a personal API token. Requires **poweruser** role or higher. Only available to OIDC-authenticated users (not API key admins).
+
+```json
+{
+  "name": "my-ci-token",
+  "max_role": "operator",
+  "expires_at": "2026-12-31T23:59:59Z"
+}
+```
+
+- `name` — required, 1-100 characters, must be unique per user
+- `max_role` — optional, caps the token's effective role (cannot exceed the user's current role)
+- `expires_at` — optional, ISO 8601 timestamp
+
+**Response:**
+
+```json
+{
+  "id": 1,
+  "name": "my-ci-token",
+  "token": "rgu_a1b2c3d4e5f6...",
+  "max_role": "operator",
+  "expires_at": "2026-12-31T23:59:59Z"
+}
+```
+
+The `token` field is the plaintext token — it is only returned once at creation and cannot be retrieved again.
+
+### `GET /api/me/tokens`
+
+List your own tokens. Available to any OIDC user (operator+). Returns token metadata only (never the plaintext token).
+
+### `DELETE /api/me/tokens/:id`
+
+Revoke one of your own tokens. Requires **poweruser** role or higher. The token is immediately invalidated.
+
+## User API Tokens (admin)
+
+Admins can manage tokens for any user, including creating tokens for operators who cannot create their own.
+
+### `POST /api/admin/user-tokens`
+
+Create a token for any OIDC user. Requires **admin** role.
+
+```json
+{
+  "email": "operator@example.com",
+  "name": "operator-automation",
+  "max_role": "operator",
+  "expires_at": "2026-06-30T23:59:59Z"
+}
+```
+
+Response is the same as `POST /api/me/tokens`.
+
+### `GET /api/admin/user-tokens`
+
+List all user tokens across all users. Requires **admin** role.
+
+### `DELETE /api/admin/user-tokens/:id`
+
+Revoke any user token. Requires **admin** role.
+
+### `GET /api/admin/token-audit`
+
+View the token audit log. Requires **admin** role.
+
+**Query parameters:**
+
+- `limit` — max entries to return (default: 200, max: 1000)
+- `email` — filter by user email
+
+Returns an array of audit events with fields: `created_at`, `user_email`, `token_name`, `action`, `ip_addr`, `details`.
+
 ## Authentication
 
 ### `GET /api/auth/status`

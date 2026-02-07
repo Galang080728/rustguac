@@ -1,6 +1,6 @@
 //! REST API routes.
 
-use crate::auth::{client_ip, AuthIdentity, TrustedProxies};
+use crate::auth::{client_ip, role_level, AuthIdentity, TrustedProxies};
 use crate::db::{self, Db};
 use crate::session::{CreateSessionRequest, SessionManager, SessionType};
 use crate::vault::{AddressBookEntry, FolderConfig, VaultClient, VaultError};
@@ -1410,6 +1410,595 @@ pub async fn ab_delete_entry(
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── User API Tokens ──
+
+#[derive(Deserialize)]
+pub struct CreateTokenRequest {
+    pub name: String,
+    pub max_role: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AdminCreateTokenRequest {
+    pub email: String,
+    pub name: String,
+    pub max_role: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+/// POST /api/me/tokens — Create a personal API token. Requires poweruser+.
+pub async fn create_my_token(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(database): Extension<Db>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    trusted: Option<Extension<TrustedProxies>>,
+    Json(req): Json<CreateTokenRequest>,
+) -> impl IntoResponse {
+    let id = match identity {
+        Some(Extension(ref id)) => id.clone(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "authentication required"})),
+            )
+                .into_response()
+        }
+    };
+
+    // Only poweruser+ can self-create tokens
+    if !id.has_role("poweruser") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "poweruser role or higher required to create tokens"})),
+        )
+            .into_response();
+    }
+
+    // Must be an OIDC user (not an API key admin)
+    let email = match &id {
+        AuthIdentity::User { email, .. } => email.clone(),
+        AuthIdentity::ApiKey(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "API key admins cannot create user tokens — use the admin endpoint"})),
+            )
+                .into_response()
+        }
+    };
+
+    // Validate max_role if provided
+    if let Some(ref max_role) = req.max_role {
+        if !["admin", "poweruser", "operator", "viewer"].contains(&max_role.as_str()) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "max_role must be admin, poweruser, operator, or viewer"})),
+            )
+                .into_response();
+        }
+        if role_level(max_role) > role_level(id.role()) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "max_role cannot exceed your current role"})),
+            )
+                .into_response();
+        }
+    }
+
+    if req.name.is_empty() || req.name.len() > 100 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "token name must be 1-100 characters"})),
+        )
+            .into_response();
+    }
+
+    let db_clone = database.clone();
+    let email_clone = email.clone();
+    let user = match tokio::task::spawn_blocking(move || {
+        db::get_user_by_email(&db_clone, &email_clone)
+    })
+    .await
+    {
+        Ok(Ok(u)) => u,
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "failed to look up user"})),
+            )
+                .into_response()
+        }
+    };
+
+    let db_clone = database.clone();
+    let name = req.name.clone();
+    let max_role = req.max_role.clone();
+    let expires_at = req.expires_at.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        db::create_user_token(
+            &db_clone,
+            user.id,
+            &name,
+            max_role.as_deref(),
+            expires_at.as_deref(),
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok((token_id, plaintext))) => {
+            let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
+            let ip = client_ip(&headers, addr.ip(), &proxies);
+            let details = serde_json::to_string(&json!({
+                "max_role": req.max_role,
+                "expires_at": req.expires_at,
+            }))
+            .ok();
+            let db_clone = database.clone();
+            let email_clone = email.clone();
+            let name_clone = req.name.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                db::log_token_event(
+                    &db_clone,
+                    Some(token_id),
+                    Some(&name_clone),
+                    &email_clone,
+                    "created",
+                    Some(&ip.to_string()),
+                    details.as_deref(),
+                )
+            })
+            .await;
+
+            Json(json!({
+                "id": token_id,
+                "name": req.name,
+                "token": plaintext,
+                "max_role": req.max_role,
+                "expires_at": req.expires_at,
+            }))
+            .into_response()
+        }
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            if msg.contains("UNIQUE constraint") {
+                (
+                    StatusCode::CONFLICT,
+                    Json(json!({"error": format!("token name '{}' already exists", req.name)})),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "failed to create token"})),
+                )
+                    .into_response()
+            }
+        }
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "failed to create token"})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/me/tokens — List own tokens.
+pub async fn list_my_tokens(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(database): Extension<Db>,
+) -> impl IntoResponse {
+    let email = match identity {
+        Some(Extension(AuthIdentity::User { ref email, .. })) => email.clone(),
+        _ => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "OIDC authentication required"})),
+            )
+                .into_response()
+        }
+    };
+
+    let db_clone = database.clone();
+    let user = match tokio::task::spawn_blocking(move || {
+        db::get_user_by_email(&db_clone, &email)
+    })
+    .await
+    {
+        Ok(Ok(u)) => u,
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "failed to look up user"})),
+            )
+                .into_response()
+        }
+    };
+
+    let db_clone = database.clone();
+    match tokio::task::spawn_blocking(move || db::list_user_tokens(&db_clone, user.id)).await {
+        Ok(Ok(tokens)) => Json(json!(tokens)).into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "failed to list tokens"})),
+        )
+            .into_response(),
+    }
+}
+
+/// DELETE /api/me/tokens/{id} — Revoke own token. Requires poweruser+.
+pub async fn revoke_my_token(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(database): Extension<Db>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    trusted: Option<Extension<TrustedProxies>>,
+    Path(token_id): Path<i64>,
+) -> impl IntoResponse {
+    let (email, role) = match identity {
+        Some(Extension(AuthIdentity::User {
+            ref email,
+            ref role,
+            ..
+        })) => (email.clone(), role.clone()),
+        _ => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "OIDC authentication required"})),
+            )
+                .into_response()
+        }
+    };
+
+    if role_level(&role) < role_level("poweruser") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "poweruser role or higher required to manage tokens"})),
+        )
+            .into_response();
+    }
+
+    let db_clone = database.clone();
+    let email_clone = email.clone();
+    let user = match tokio::task::spawn_blocking(move || {
+        db::get_user_by_email(&db_clone, &email_clone)
+    })
+    .await
+    {
+        Ok(Ok(u)) => u,
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "failed to look up user"})),
+            )
+                .into_response()
+        }
+    };
+
+    let db_clone = database.clone();
+    let user_id = user.id;
+    match tokio::task::spawn_blocking(move || db::revoke_user_token(&db_clone, user_id, token_id))
+        .await
+    {
+        Ok(Ok(true)) => {
+            let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
+            let ip = client_ip(&headers, addr.ip(), &proxies);
+            let db_clone = database.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                db::log_token_event(
+                    &db_clone,
+                    Some(token_id),
+                    None,
+                    &email,
+                    "revoked",
+                    Some(&ip.to_string()),
+                    Some("self-service revocation"),
+                )
+            })
+            .await;
+            Json(json!({"ok": true})).into_response()
+        }
+        Ok(Ok(false)) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "token not found or not yours"})),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "failed to revoke token"})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/admin/user-tokens — Admin creates a token for any user.
+pub async fn admin_create_user_token(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(database): Extension<Db>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    trusted: Option<Extension<TrustedProxies>>,
+    Json(req): Json<AdminCreateTokenRequest>,
+) -> impl IntoResponse {
+    let admin_name = match identity {
+        Some(Extension(ref id)) if id.has_role("admin") => id.display_name().to_string(),
+        _ => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "admin role required"})),
+            )
+                .into_response()
+        }
+    };
+
+    if req.name.is_empty() || req.name.len() > 100 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "token name must be 1-100 characters"})),
+        )
+            .into_response();
+    }
+
+    if let Some(ref max_role) = req.max_role {
+        if !["admin", "poweruser", "operator", "viewer"].contains(&max_role.as_str()) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "max_role must be admin, poweruser, operator, or viewer"})),
+            )
+                .into_response();
+        }
+    }
+
+    let db_clone = database.clone();
+    let target_email = req.email.clone();
+    let user = match tokio::task::spawn_blocking(move || {
+        db::get_user_by_email(&db_clone, &target_email)
+    })
+    .await
+    {
+        Ok(Ok(u)) => u,
+        Ok(Err(_)) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "user not found"})),
+            )
+                .into_response()
+        }
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "database error"})),
+            )
+                .into_response()
+        }
+    };
+
+    if let Some(ref max_role) = req.max_role {
+        if role_level(max_role) > role_level(&user.role) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("max_role '{}' exceeds user's role '{}'", max_role, user.role)})),
+            )
+                .into_response();
+        }
+    }
+
+    let db_clone = database.clone();
+    let name = req.name.clone();
+    let max_role = req.max_role.clone();
+    let expires_at = req.expires_at.clone();
+    let user_id = user.id;
+    let result = tokio::task::spawn_blocking(move || {
+        db::create_user_token(
+            &db_clone,
+            user_id,
+            &name,
+            max_role.as_deref(),
+            expires_at.as_deref(),
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok((token_id, plaintext))) => {
+            let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
+            let ip = client_ip(&headers, addr.ip(), &proxies);
+            let details = serde_json::to_string(&json!({
+                "created_by": admin_name,
+                "for_user": req.email,
+                "max_role": req.max_role,
+                "expires_at": req.expires_at,
+            }))
+            .ok();
+            let db_clone = database.clone();
+            let email_clone = req.email.clone();
+            let name_clone = req.name.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                db::log_token_event(
+                    &db_clone,
+                    Some(token_id),
+                    Some(&name_clone),
+                    &email_clone,
+                    "created",
+                    Some(&ip.to_string()),
+                    details.as_deref(),
+                )
+            })
+            .await;
+
+            Json(json!({
+                "id": token_id,
+                "name": req.name,
+                "email": req.email,
+                "token": plaintext,
+                "max_role": req.max_role,
+                "expires_at": req.expires_at,
+            }))
+            .into_response()
+        }
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            if msg.contains("UNIQUE constraint") {
+                (
+                    StatusCode::CONFLICT,
+                    Json(json!({"error": format!("token name '{}' already exists for this user", req.name)})),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "failed to create token"})),
+                )
+                    .into_response()
+            }
+        }
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "failed to create token"})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/admin/user-tokens — List all user tokens. Admin only.
+pub async fn admin_list_user_tokens(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(database): Extension<Db>,
+) -> impl IntoResponse {
+    if let Some(Extension(ref id)) = identity {
+        if !id.has_role("admin") {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "admin role required"})),
+            )
+                .into_response();
+        }
+    }
+
+    let db_clone = database.clone();
+    match tokio::task::spawn_blocking(move || db::list_all_user_tokens(&db_clone)).await {
+        Ok(Ok(tokens)) => {
+            let entries: Vec<_> = tokens
+                .into_iter()
+                .map(|(t, email)| {
+                    json!({
+                        "id": t.id,
+                        "user_id": t.user_id,
+                        "email": email,
+                        "name": t.name,
+                        "max_role": t.max_role,
+                        "expires_at": t.expires_at,
+                        "disabled": t.disabled,
+                        "created_at": t.created_at,
+                        "last_used_at": t.last_used_at,
+                    })
+                })
+                .collect();
+            Json(json!(entries)).into_response()
+        }
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "failed to list tokens"})),
+        )
+            .into_response(),
+    }
+}
+
+/// DELETE /api/admin/user-tokens/{id} — Admin revoke any token.
+pub async fn admin_revoke_user_token(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(database): Extension<Db>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    trusted: Option<Extension<TrustedProxies>>,
+    Path(token_id): Path<i64>,
+) -> impl IntoResponse {
+    let admin_name = match identity {
+        Some(Extension(ref id)) if id.has_role("admin") => id.display_name().to_string(),
+        _ => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "admin role required"})),
+            )
+                .into_response()
+        }
+    };
+
+    let db_clone = database.clone();
+    match tokio::task::spawn_blocking(move || db::admin_revoke_user_token(&db_clone, token_id))
+        .await
+    {
+        Ok(Ok(true)) => {
+            let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
+            let ip = client_ip(&headers, addr.ip(), &proxies);
+            let db_clone = database.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                db::log_token_event(
+                    &db_clone,
+                    Some(token_id),
+                    None,
+                    &admin_name,
+                    "admin_revoked",
+                    Some(&ip.to_string()),
+                    None,
+                )
+            })
+            .await;
+            Json(json!({"ok": true})).into_response()
+        }
+        Ok(Ok(false)) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "token not found"})),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "failed to revoke token"})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AuditLogQuery {
+    pub limit: Option<u32>,
+    pub email: Option<String>,
+}
+
+/// GET /api/admin/token-audit — View token audit log. Admin only.
+pub async fn admin_token_audit(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(database): Extension<Db>,
+    Query(query): Query<AuditLogQuery>,
+) -> impl IntoResponse {
+    if let Some(Extension(ref id)) = identity {
+        if !id.has_role("admin") {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "admin role required"})),
+            )
+                .into_response();
+        }
+    }
+
+    let limit = query.limit.unwrap_or(200).min(1000);
+    let email = query.email.clone();
+    let db_clone = database.clone();
+    match tokio::task::spawn_blocking(move || {
+        db::list_token_audit_log(&db_clone, limit, email.as_deref())
+    })
+    .await
+    {
+        Ok(Ok(entries)) => Json(json!(entries)).into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "failed to list audit log"})),
         )
             .into_response(),
     }
