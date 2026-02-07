@@ -54,7 +54,7 @@ rustls-pemfile = "2"
 # OIDC
 openidconnect = "4"
 url = "2"
-tower-cookies = "0.10"
+tower-cookies = "0.11"
 
 # SSH key generation
 ssh-key = { version = "0.6", features = ["ed25519"] }
