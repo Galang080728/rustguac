@@ -1501,20 +1501,19 @@ pub async fn create_my_token(
 
     let db_clone = database.clone();
     let email_clone = email.clone();
-    let user = match tokio::task::spawn_blocking(move || {
-        db::get_user_by_email(&db_clone, &email_clone)
-    })
-    .await
-    {
-        Ok(Ok(u)) => u,
-        _ => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "failed to look up user"})),
-            )
-                .into_response()
-        }
-    };
+    let user =
+        match tokio::task::spawn_blocking(move || db::get_user_by_email(&db_clone, &email_clone))
+            .await
+        {
+            Ok(Ok(u)) => u,
+            _ => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "failed to look up user"})),
+                )
+                    .into_response()
+            }
+        };
 
     let db_clone = database.clone();
     let name = req.name.clone();
@@ -1606,20 +1605,17 @@ pub async fn list_my_tokens(
     };
 
     let db_clone = database.clone();
-    let user = match tokio::task::spawn_blocking(move || {
-        db::get_user_by_email(&db_clone, &email)
-    })
-    .await
-    {
-        Ok(Ok(u)) => u,
-        _ => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "failed to look up user"})),
-            )
-                .into_response()
-        }
-    };
+    let user =
+        match tokio::task::spawn_blocking(move || db::get_user_by_email(&db_clone, &email)).await {
+            Ok(Ok(u)) => u,
+            _ => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "failed to look up user"})),
+                )
+                    .into_response()
+            }
+        };
 
     let db_clone = database.clone();
     match tokio::task::spawn_blocking(move || db::list_user_tokens(&db_clone, user.id)).await {
@@ -1666,20 +1662,19 @@ pub async fn revoke_my_token(
 
     let db_clone = database.clone();
     let email_clone = email.clone();
-    let user = match tokio::task::spawn_blocking(move || {
-        db::get_user_by_email(&db_clone, &email_clone)
-    })
-    .await
-    {
-        Ok(Ok(u)) => u,
-        _ => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "failed to look up user"})),
-            )
-                .into_response()
-        }
-    };
+    let user =
+        match tokio::task::spawn_blocking(move || db::get_user_by_email(&db_clone, &email_clone))
+            .await
+        {
+            Ok(Ok(u)) => u,
+            _ => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "failed to look up user"})),
+                )
+                    .into_response()
+            }
+        };
 
     let db_clone = database.clone();
     let user_id = user.id;
@@ -1757,27 +1752,26 @@ pub async fn admin_create_user_token(
 
     let db_clone = database.clone();
     let target_email = req.email.clone();
-    let user = match tokio::task::spawn_blocking(move || {
-        db::get_user_by_email(&db_clone, &target_email)
-    })
-    .await
-    {
-        Ok(Ok(u)) => u,
-        Ok(Err(_)) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "user not found"})),
-            )
-                .into_response()
-        }
-        _ => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "database error"})),
-            )
-                .into_response()
-        }
-    };
+    let user =
+        match tokio::task::spawn_blocking(move || db::get_user_by_email(&db_clone, &target_email))
+            .await
+        {
+            Ok(Ok(u)) => u,
+            Ok(Err(_)) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "user not found"})),
+                )
+                    .into_response()
+            }
+            _ => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "database error"})),
+                )
+                    .into_response()
+            }
+        };
 
     if let Some(ref max_role) = req.max_role {
         if role_level(max_role) > role_level(&user.role) {
