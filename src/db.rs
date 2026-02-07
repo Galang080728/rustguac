@@ -819,19 +819,20 @@ pub fn list_token_audit_log(
     user_email: Option<&str>,
 ) -> rusqlite::Result<Vec<TokenAuditEntry>> {
     let conn = db.lock().unwrap();
-    let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(email) = user_email {
-        (
-            "SELECT id, token_id, token_name, user_email, action, ip_addr, details, created_at
+    let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) =
+        if let Some(email) = user_email {
+            (
+                "SELECT id, token_id, token_name, user_email, action, ip_addr, details, created_at
              FROM token_audit_log WHERE user_email = ?1 ORDER BY id DESC LIMIT ?2",
-            vec![Box::new(email.to_string()), Box::new(limit)],
-        )
-    } else {
-        (
-            "SELECT id, token_id, token_name, user_email, action, ip_addr, details, created_at
+                vec![Box::new(email.to_string()), Box::new(limit)],
+            )
+        } else {
+            (
+                "SELECT id, token_id, token_name, user_email, action, ip_addr, details, created_at
              FROM token_audit_log ORDER BY id DESC LIMIT ?1",
-            vec![Box::new(limit)],
-        )
-    };
+                vec![Box::new(limit)],
+            )
+        };
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
         Ok(TokenAuditEntry {
