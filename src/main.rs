@@ -288,14 +288,14 @@ fn cmd_generate_cert(hostname: &str, out_dir: &str, extra_sans: &[String]) {
         }
     }
 
-    let CertifiedKey { cert, key_pair } =
+    let CertifiedKey { cert, signing_key } =
         generate_simple_self_signed(sans.clone()).expect("Failed to generate certificate");
 
     let cert_path = std::path::Path::new(out_dir).join("cert.pem");
     let key_path = std::path::Path::new(out_dir).join("key.pem");
 
     std::fs::write(&cert_path, cert.pem()).expect("Failed to write cert.pem");
-    std::fs::write(&key_path, key_pair.serialize_pem()).expect("Failed to write key.pem");
+    std::fs::write(&key_path, signing_key.serialize_pem()).expect("Failed to write key.pem");
 
     println!("Generated self-signed certificate:");
     println!("  Certificate: {}", cert_path.display());
