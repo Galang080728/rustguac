@@ -64,6 +64,13 @@ pub async fn create_session(
                 req.port.unwrap_or(3389)
             )
         }
+        crate::session::SessionType::Vnc => {
+            format!(
+                "{}:{}",
+                req.hostname.as_deref().unwrap_or("?"),
+                req.port.unwrap_or(5900)
+            )
+        }
         crate::session::SessionType::Web => req.url.as_deref().unwrap_or("?").to_string(),
     };
 
@@ -1095,6 +1102,7 @@ pub async fn ab_connect_entry(
     let session_type = match ab_entry.session_type.as_str() {
         "ssh" => SessionType::Ssh,
         "rdp" => SessionType::Rdp,
+        "vnc" => SessionType::Vnc,
         "web" => SessionType::Web,
         other => {
             return (
@@ -1122,6 +1130,13 @@ pub async fn ab_connect_entry(
         auth_pkg: ab_entry.auth_pkg,
         kdc_url: ab_entry.kdc_url,
         kerberos_cache: None,
+        color_depth: ab_entry.color_depth,
+        jump_hosts: ab_entry.jump_hosts,
+        jump_host: None,
+        jump_port: None,
+        jump_username: None,
+        jump_password: None,
+        jump_private_key: None,
         width: req.width,
         height: req.height,
         dpi: req.dpi,
@@ -1368,14 +1383,46 @@ pub async fn ab_update_entry(
 
     // Read existing entry to preserve credentials the frontend never sends back
     let merged = match vault.get_entry(&scope, &folder, &entry).await {
-        Ok(existing) => AddressBookEntry {
-            // Only preserve password and private_key from existing — these are
-            // deliberately stripped from EntryInfo so the frontend never has them.
-            // All other fields come from the incoming data as-is.
-            password: data.password.or(existing.password),
-            private_key: data.private_key.or(existing.private_key),
-            ..data
-        },
+        Ok(existing) => {
+            // Per-hop credential merge: for each hop in the new data, if credentials
+            // are None and the same-index hop exists in the old data, preserve them.
+            let merged_jump_hosts = if let Some(ref new_hops) = data.jump_hosts {
+                let old_hops = existing.jump_hosts.as_deref().unwrap_or(&[]);
+                let merged: Vec<_> = new_hops
+                    .iter()
+                    .enumerate()
+                    .map(|(i, hop)| {
+                        let old = old_hops.get(i);
+                        crate::tunnel::JumpHost {
+                            hostname: hop.hostname.clone(),
+                            port: hop.port,
+                            username: hop.username.clone(),
+                            password: hop
+                                .password
+                                .clone()
+                                .or_else(|| old.and_then(|o| o.password.clone())),
+                            private_key: hop
+                                .private_key
+                                .clone()
+                                .or_else(|| old.and_then(|o| o.private_key.clone())),
+                        }
+                    })
+                    .collect();
+                Some(merged)
+            } else {
+                data.jump_hosts.clone()
+            };
+
+            AddressBookEntry {
+                password: data.password.or(existing.password),
+                private_key: data.private_key.or(existing.private_key),
+                jump_hosts: merged_jump_hosts,
+                // Clear legacy flat fields — they've been migrated
+                jump_password: None,
+                jump_private_key: None,
+                ..data
+            }
+        }
         Err(_) => data, // New entry or Vault error — just write what we have
     };
 

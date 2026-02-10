@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::drive;
 use crate::guacd;
 use crate::guacd::GuacdStream;
+use crate::tunnel;
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;
 use rand::Rng;
@@ -17,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 use uuid::Uuid;
 
-/// Session type: SSH terminal, web browser, or RDP.
+/// Session type: SSH terminal, web browser, RDP, or VNC.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionType {
@@ -25,6 +26,7 @@ pub enum SessionType {
     Ssh,
     Web,
     Rdp,
+    Vnc,
 }
 
 /// Parameters for creating a new session.
@@ -51,6 +53,16 @@ pub struct CreateSessionRequest {
     pub kdc_url: Option<String>,
     /// Kerberos ticket cache path (optional).
     pub kerberos_cache: Option<String>,
+    // VNC fields
+    pub color_depth: Option<u8>,
+    // SSH tunnel / jump host fields (multi-hop)
+    pub jump_hosts: Option<Vec<tunnel::JumpHost>>,
+    // Legacy flat fields for backward compat (single jump host)
+    pub jump_host: Option<String>,
+    pub jump_port: Option<u16>,
+    pub jump_username: Option<String>,
+    pub jump_password: Option<String>,
+    pub jump_private_key: Option<String>,
     // Common
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -121,6 +133,8 @@ pub struct Session {
     pub deferred_params: Option<guacd::ConnectionParams>,
     /// Per-session drive directory path (RDP sessions with drive enabled).
     pub drive_path: Option<std::path::PathBuf>,
+    /// SSH tunnel chain (jump hosts) — kept alive for the session duration.
+    pub tunnels: Vec<tunnel::SshTunnel>,
 }
 
 fn generate_share_token() -> String {
@@ -251,11 +265,11 @@ impl SessionManager {
         let dpi = req.dpi.unwrap_or(96);
 
         let (
-            conn_params,
+            mut conn_params,
             hostname,
             username,
             url,
-            browser_session,
+            mut browser_session,
             banner_override,
             session_drive_path,
         ) = match req.session_type {
@@ -412,6 +426,32 @@ impl SessionManager {
                     session_drive_path,
                 )
             }
+            SessionType::Vnc => {
+                let hostname = req.hostname.ok_or_else(|| {
+                    SessionError::ValidationError("hostname is required for VNC sessions".into())
+                })?;
+                let port = req.port.unwrap_or(5900);
+                let username = req.username.clone().unwrap_or_default();
+
+                check_allowed_network(&hostname, port, &self.config.vnc_allowed_networks)?;
+
+                tracing::info!(
+                    session_id = %session_id,
+                    hostname = %hostname,
+                    "Creating new VNC session"
+                );
+
+                let params = guacd::ConnectionParams::Vnc(guacd::VncParams {
+                    hostname: hostname.clone(),
+                    port,
+                    password: req.password.clone(),
+                    color_depth: req.color_depth,
+                    width,
+                    height,
+                    dpi,
+                });
+                (params, hostname, username, None, None, None, None)
+            }
             SessionType::Web => {
                 let url = req.url.ok_or_else(|| {
                     SessionError::ValidationError("url is required for web sessions".into())
@@ -445,24 +485,15 @@ impl SessionManager {
                     "Creating new web session"
                 );
 
-                let browser = self
-                    .browser_manager
-                    .spawn(&url, width, height)
-                    .await
-                    .map_err(|e| SessionError::BrowserSpawn(e.to_string()))?;
-
-                let vnc_port = browser.vnc_port;
-
-                tracing::info!(
-                    session_id = %session_id,
-                    vnc_port = %vnc_port,
-                    display = %browser.display,
-                    "Browser processes ready, connecting guacd via VNC"
-                );
-
+                // Defer browser spawning — we may need to rewrite the URL
+                // if jump hosts are configured (tunnel gets set up below).
+                // Store a placeholder VNC params with port 0; will be updated
+                // after browser spawn.
                 let params = guacd::ConnectionParams::Vnc(guacd::VncParams {
                     hostname: "127.0.0.1".into(),
-                    port: vnc_port,
+                    port: 0, // placeholder — updated after browser spawn
+                    password: None,
+                    color_depth: None,
                     width,
                     height,
                     dpi,
@@ -472,12 +503,139 @@ impl SessionManager {
                     "localhost".into(),
                     String::new(),
                     Some(url),
-                    Some(browser),
+                    None, // browser spawned after tunnel setup
                     None,
                     None,
                 )
             }
         };
+
+        // Resolve jump hosts: prefer jump_hosts array, fall back to legacy flat fields
+        let jump_hops: Vec<tunnel::JumpHost> = if let Some(hops) = req.jump_hosts {
+            hops
+        } else if let Some(ref jh) = req.jump_host {
+            if !jh.is_empty() {
+                vec![tunnel::JumpHost {
+                    hostname: jh.clone(),
+                    port: req.jump_port.unwrap_or(22),
+                    username: req.jump_username.clone().unwrap_or_default(),
+                    password: req.jump_password.clone(),
+                    private_key: req.jump_private_key.clone(),
+                }]
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Set up SSH tunnel chain if jump hosts are configured.
+        // For SSH/RDP/VNC: overrides hostname/port in conn_params so guacd
+        // connects to the local tunnel listener instead of the real target.
+        // For Web: tunnels to the URL's host:port and rewrites the browser URL.
+        let is_web = url.is_some() && browser_session.is_none();
+        let ssh_tunnels = if !jump_hops.is_empty() {
+            let (target_host, target_port) = if is_web {
+                // Web session: tunnel to the URL's host:port
+                let parsed = Url::parse(url.as_ref().unwrap())
+                    .map_err(|e| SessionError::ValidationError(format!("invalid URL: {}", e)))?;
+                let host = parsed.host_str().unwrap_or("localhost").to_string();
+                let port = parsed.port_or_known_default().unwrap_or(80);
+                (host, port)
+            } else {
+                match &conn_params {
+                    guacd::ConnectionParams::Ssh(p) => (p.hostname.clone(), p.port),
+                    guacd::ConnectionParams::Rdp(p) => (p.hostname.clone(), p.port),
+                    guacd::ConnectionParams::Vnc(p) => (p.hostname.clone(), p.port),
+                }
+            };
+
+            let (tunnels, final_addr) = tunnel::start_chain(&jump_hops, &target_host, target_port)
+                .await
+                .map_err(|e| SessionError::ValidationError(format!("SSH tunnel failed: {}", e)))?;
+
+            if !is_web {
+                // Override connection params to point at the final tunnel endpoint
+                match &mut conn_params {
+                    guacd::ConnectionParams::Ssh(p) => {
+                        p.hostname = final_addr.ip().to_string();
+                        p.port = final_addr.port();
+                    }
+                    guacd::ConnectionParams::Rdp(p) => {
+                        p.hostname = final_addr.ip().to_string();
+                        p.port = final_addr.port();
+                    }
+                    guacd::ConnectionParams::Vnc(p) => {
+                        p.hostname = final_addr.ip().to_string();
+                        p.port = final_addr.port();
+                    }
+                }
+            }
+
+            let hop_names: Vec<&str> = jump_hops.iter().map(|h| h.hostname.as_str()).collect();
+            tracing::info!(
+                session_id = %session_id,
+                final_addr = %final_addr,
+                hops = ?hop_names,
+                "SSH tunnel chain established ({} hops)",
+                tunnels.len()
+            );
+
+            Some((tunnels, final_addr))
+        } else {
+            None
+        };
+
+        // For web sessions, spawn the browser now (after tunnels are set up).
+        // If a tunnel is active, rewrite the URL to go through it.
+        if is_web {
+            let browser_url = if let Some((_, ref final_addr)) = ssh_tunnels {
+                let parsed = Url::parse(url.as_ref().unwrap()).unwrap();
+                let scheme = parsed.scheme();
+                let path_and_query = if let Some(q) = parsed.query() {
+                    format!("{}?{}", parsed.path(), q)
+                } else {
+                    parsed.path().to_string()
+                };
+                let rewritten = format!(
+                    "{}://127.0.0.1:{}{}",
+                    scheme,
+                    final_addr.port(),
+                    path_and_query,
+                );
+                tracing::info!(
+                    session_id = %session_id,
+                    original_url = %url.as_ref().unwrap(),
+                    rewritten_url = %rewritten,
+                    "Rewrote web session URL to use SSH tunnel"
+                );
+                rewritten
+            } else {
+                url.as_ref().unwrap().clone()
+            };
+
+            let browser = self
+                .browser_manager
+                .spawn(&browser_url, width, height)
+                .await
+                .map_err(|e| SessionError::BrowserSpawn(e.to_string()))?;
+
+            let vnc_port = browser.vnc_port;
+            tracing::info!(
+                session_id = %session_id,
+                vnc_port = %vnc_port,
+                display = %browser.display,
+                "Browser processes ready, connecting guacd via VNC"
+            );
+
+            // Update the VNC params with the actual port
+            if let guacd::ConnectionParams::Vnc(ref mut p) = conn_params {
+                p.port = vnc_port;
+            }
+            browser_session = Some(browser);
+        }
+
+        let ssh_tunnels = ssh_tunnels.map(|(t, _)| t).unwrap_or_default();
 
         // For ephemeral keypair sessions, defer the guacd connection until
         // the user dismisses the banner (i.e. when the WebSocket connects).
@@ -540,6 +698,7 @@ impl SessionManager {
             browser_session,
             deferred_params,
             drive_path: session_drive_path,
+            tunnels: ssh_tunnels,
         };
 
         let info = session.info();
@@ -804,7 +963,8 @@ impl SessionManager {
     }
 }
 
-/// Kill browser processes if this is a web session, and clean up drive directory.
+/// Kill browser processes if this is a web session, clean up drive directory,
+/// and shut down any SSH tunnel.
 async fn cleanup_browser(browser_manager: &BrowserManager, session: &mut Session) {
     if let Some(ref mut bs) = session.browser_session {
         browser_manager.kill(bs).await;
@@ -816,6 +976,10 @@ async fn cleanup_browser(browser_manager: &BrowserManager, session: &mut Session
         drive::cleanup_session_dir(drive_path.clone(), session.id, 0).await;
         session.drive_path = None;
     }
+
+    // Shut down SSH tunnel chain (reverse order)
+    tunnel::shutdown_chain(&session.tunnels);
+    session.tunnels.clear();
 }
 
 #[derive(Debug)]

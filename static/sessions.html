@@ -72,6 +72,104 @@
         }
         .btn-small:hover { text-decoration: underline; }
         .btn-share { color: var(--accent); }
+
+        /* Hop cards */
+        .hop-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-bottom: 0.6em;
+        }
+        .hop-card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            padding: 0.4em 0.6em;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .hop-card-header:hover { background: var(--input); }
+        .hop-card-header .hop-num {
+            color: var(--accent);
+            font-weight: bold;
+            min-width: 2em;
+        }
+        .hop-card-header .hop-hostname {
+            flex: 1;
+            color: var(--text);
+        }
+        .hop-card-header .hop-hostname input {
+            display: inline;
+            width: 100%;
+            padding: 0.2em 0.4em;
+            background: var(--input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: monospace;
+            font-size: 1em;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        .hop-card-header .hop-remove {
+            color: var(--primary);
+            cursor: pointer;
+            font-size: 0.85em;
+            background: none;
+            border: none;
+            padding: 0.2em 0.4em;
+            font-family: monospace;
+        }
+        .hop-card-header .hop-remove:hover { text-decoration: underline; }
+        .hop-card-body {
+            padding: 0.4em 0.6em 0.6em 2.6em;
+            display: none;
+        }
+        .hop-card-body.expanded { display: block; }
+        .hop-card-body label { margin-top: 0.5em; }
+        .hop-card-body input, .hop-card-body textarea {
+            display: block;
+            width: 100%;
+            padding: 0.3em;
+            margin-top: 0.2em;
+            background: var(--input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: monospace;
+            font-size: 0.95em;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+
+        /* Flow diagram */
+        .flow-diagram {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            flex-wrap: wrap;
+            margin-bottom: 0.8em;
+            font-size: 0.85em;
+        }
+        .flow-node {
+            display: inline-block;
+            padding: 0.2em 0.6em;
+            border-radius: 3px;
+            white-space: nowrap;
+        }
+        .flow-node-you { background: var(--input); color: var(--text-muted); }
+        .flow-node-hop { background: #1b4332; color: #52b788; }
+        .flow-node-target { background: var(--input); color: var(--accent); font-weight: bold; }
+        .flow-arrow { color: var(--text-muted); margin: 0 0.3em; }
+
+        .btn-add-hop {
+            background: var(--input);
+            color: var(--accent);
+            border: 1px solid var(--border);
+            font-size: 0.85em;
+            padding: 0.3em 0.8em;
+            margin-top: 0;
+        }
+        .btn-add-hop:hover { background: var(--surface); }
+
         .share-url {
             background: var(--input);
             padding: 0.3em 0.6em;
@@ -105,6 +203,7 @@
             <select id="session-type" style="display:block;width:100%;padding:0.4em;margin-top:0.2em;background:var(--input);border:1px solid var(--border);color:var(--text);font-family:monospace;font-size:1em;border-radius:3px;">
                 <option value="ssh" selected>SSH</option>
                 <option value="rdp">RDP</option>
+                <option value="vnc">VNC</option>
                 <option value="web">Web</option>
             </select>
         </label>
@@ -159,10 +258,32 @@
                 <input type="checkbox" id="rdp-ignore-cert" style="display:inline;width:auto;margin-right:0.4em"> Ignore certificate errors
             </label>
         </div>
+        <div id="vnc-fields" style="display:none">
+            <label>Host
+                <input type="text" id="vnc-hostname" placeholder="192.168.1.1">
+            </label>
+            <label>Port
+                <input type="number" id="vnc-port" value="5900">
+            </label>
+            <label>Password (optional)
+                <input type="password" id="vnc-password">
+            </label>
+        </div>
         <div id="web-fields" style="display:none">
             <label>URL
                 <input type="text" id="url" placeholder="https://example.com">
             </label>
+        </div>
+        <div id="jump-section" style="display:none;margin-top:1em;padding-top:0.8em;border-top:1px solid var(--border)">
+            <label style="cursor:pointer;color:var(--accent);font-size:0.95em" id="jump-toggle">
+                <span id="jump-arrow">&#9654;</span> SSH Tunnel / Jump Hosts
+            </label>
+            <div id="jump-fields" style="display:none">
+                <div style="color:#555;font-size:0.8em;margin-bottom:0.5em">Route through one or more SSH bastion hosts (multi-hop).</div>
+                <div id="flow-diagram" class="flow-diagram"></div>
+                <div id="hops-list"></div>
+                <button type="button" class="btn-add-hop" id="add-hop-btn">+ Add Jump Host</button>
+            </div>
         </div>
         <label>Banner message (shown to user before session starts)
             <input type="text" id="banner" placeholder="e.g. Please enter your credentials when prompted">
@@ -252,7 +373,9 @@
         var sessionType = document.getElementById('session-type');
         var sshFields = document.getElementById('ssh-fields');
         var rdpFields = document.getElementById('rdp-fields');
+        var vncFields = document.getElementById('vnc-fields');
         var webFields = document.getElementById('web-fields');
+        var jumpSection = document.getElementById('jump-section');
 
         var generateKeypair = document.getElementById('generate-keypair');
         var privateKeyField = document.getElementById('private-key-field');
@@ -272,10 +395,177 @@
         sessionType.addEventListener('change', function() {
             sshFields.style.display = 'none';
             rdpFields.style.display = 'none';
+            vncFields.style.display = 'none';
             webFields.style.display = 'none';
-            if (sessionType.value === 'ssh') sshFields.style.display = '';
-            else if (sessionType.value === 'rdp') rdpFields.style.display = '';
-            else if (sessionType.value === 'web') webFields.style.display = '';
+            var v = sessionType.value;
+            if (v === 'ssh') sshFields.style.display = '';
+            else if (v === 'rdp') rdpFields.style.display = '';
+            else if (v === 'vnc') vncFields.style.display = '';
+            else if (v === 'web') webFields.style.display = '';
+            // Show jump host section for all session types
+            jumpSection.style.display = '';
+        });
+
+        document.getElementById('jump-toggle').addEventListener('click', function() {
+            var fields = document.getElementById('jump-fields');
+            var arrow = document.getElementById('jump-arrow');
+            if (fields.style.display === 'none') {
+                fields.style.display = '';
+                arrow.innerHTML = '&#9660;';
+            } else {
+                fields.style.display = 'none';
+                arrow.innerHTML = '&#9654;';
+            }
+        });
+
+        // ── Escape helpers ──
+        function escapeHtml(s) {
+            var d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+        function escapeAttr(s) {
+            return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // ── Multi-hop management ──
+        var hopList = []; // Array of {hostname, port, username, password, private_key, expanded}
+
+        function renderHops() {
+            var container = document.getElementById('hops-list');
+            container.innerHTML = '';
+            hopList.forEach(function(hop, i) {
+                var card = document.createElement('div');
+                card.className = 'hop-card';
+
+                // Header
+                var header = document.createElement('div');
+                header.className = 'hop-card-header';
+
+                var num = document.createElement('span');
+                num.className = 'hop-num';
+                num.textContent = '#' + (i + 1);
+                header.appendChild(num);
+
+                var hostWrap = document.createElement('span');
+                hostWrap.className = 'hop-hostname';
+                var hostInput = document.createElement('input');
+                hostInput.type = 'text';
+                hostInput.placeholder = 'bastion.example.com';
+                hostInput.value = hop.hostname || '';
+                hostInput.setAttribute('data-hop', i);
+                hostInput.setAttribute('data-field', 'hostname');
+                hostInput.addEventListener('input', onHopFieldChange);
+                hostInput.addEventListener('click', function(e) { e.stopPropagation(); });
+                hostWrap.appendChild(hostInput);
+                header.appendChild(hostWrap);
+
+                var toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'hop-remove';
+                toggle.textContent = hop.expanded ? 'collapse' : 'expand';
+                toggle.setAttribute('data-hop', i);
+                toggle.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    hopList[i].expanded = !hopList[i].expanded;
+                    renderHops();
+                });
+                header.appendChild(toggle);
+
+                var removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'hop-remove';
+                removeBtn.textContent = 'remove';
+                removeBtn.setAttribute('data-hop', i);
+                removeBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    hopList.splice(i, 1);
+                    renderHops();
+                    updateFlowDiagram();
+                });
+                header.appendChild(removeBtn);
+
+                card.appendChild(header);
+
+                // Body (collapsible)
+                var body = document.createElement('div');
+                body.className = 'hop-card-body' + (hop.expanded ? ' expanded' : '');
+
+                body.innerHTML =
+                    '<label>SSH Port<input type="number" data-hop="' + i + '" data-field="port" value="' + (hop.port || 22) + '"></label>' +
+                    '<label>Username<input type="text" data-hop="' + i + '" data-field="username" value="' + escapeAttr(hop.username || '') + '"></label>' +
+                    '<label>Password<input type="password" data-hop="' + i + '" data-field="password" value="' + escapeAttr(hop.password || '') + '"></label>' +
+                    '<label>Private key (PEM)<textarea data-hop="' + i + '" data-field="private_key" rows="2" style="resize:vertical;font-size:0.85em" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----">' + escapeHtml(hop.private_key || '') + '</textarea></label>';
+
+                var inputs = body.querySelectorAll('input, textarea');
+                for (var j = 0; j < inputs.length; j++) {
+                    inputs[j].addEventListener('input', onHopFieldChange);
+                }
+
+                card.appendChild(body);
+                container.appendChild(card);
+            });
+            updateFlowDiagram();
+        }
+
+        function onHopFieldChange(e) {
+            var idx = parseInt(e.target.getAttribute('data-hop'));
+            var field = e.target.getAttribute('data-field');
+            if (field === 'port') {
+                hopList[idx][field] = parseInt(e.target.value) || 22;
+            } else {
+                hopList[idx][field] = e.target.value;
+            }
+            if (field === 'hostname') updateFlowDiagram();
+        }
+
+        function updateFlowDiagram() {
+            var diag = document.getElementById('flow-diagram');
+            if (!diag) return;
+            var html = '<span class="flow-node flow-node-you">You</span>';
+            hopList.forEach(function(hop) {
+                var label = hop.hostname || '???';
+                html += '<span class="flow-arrow">&rarr;</span><span class="flow-node flow-node-hop">' + escapeHtml(label) + '</span>';
+            });
+            // Add target
+            var type = sessionType.value;
+            var targetHost = '';
+            var targetPort = '';
+            var typeLabel = type.toUpperCase();
+            if (type === 'ssh') {
+                targetHost = document.getElementById('hostname').value || '???';
+                targetPort = document.getElementById('port').value || '22';
+            } else if (type === 'rdp') {
+                targetHost = document.getElementById('rdp-hostname').value || '???';
+                targetPort = document.getElementById('rdp-port').value || '3389';
+            } else if (type === 'vnc') {
+                targetHost = document.getElementById('vnc-hostname').value || '???';
+                targetPort = document.getElementById('vnc-port').value || '5900';
+            } else if (type === 'web') {
+                // Parse host:port from URL
+                try {
+                    var u = new URL(document.getElementById('url').value);
+                    targetHost = u.hostname || '???';
+                    targetPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+                } catch(e) {
+                    targetHost = '???';
+                    targetPort = '80';
+                }
+            }
+            if (targetHost) {
+                html += '<span class="flow-arrow">&rarr;</span><span class="flow-node flow-node-target">' + escapeHtml(targetHost) + ':' + escapeHtml(targetPort) + ' ' + typeLabel + '</span>';
+            }
+            // Show URL rewrite warning for web sessions with hops
+            var warn = '';
+            if (type === 'web' && hopList.length > 0) {
+                warn = '<div style="color:var(--primary);font-size:0.8em;margin-top:0.4em">Note: The URL will be rewritten to 127.0.0.1:{tunnel_port} inside the headless browser. TLS certificate errors are expected if the target uses HTTPS.</div>';
+            }
+            diag.innerHTML = hopList.length > 0 ? html + warn : '';
+        }
+
+        document.getElementById('add-hop-btn').addEventListener('click', function() {
+            hopList.push({ hostname: '', port: 22, username: '', password: '', private_key: '', expanded: true });
+            renderHops();
         });
 
         form.addEventListener('submit', function(e) {
@@ -288,6 +578,12 @@
             if (sessionType.value === 'web') {
                 body.session_type = 'web';
                 body.url = document.getElementById('url').value;
+            } else if (sessionType.value === 'vnc') {
+                body.session_type = 'vnc';
+                body.hostname = document.getElementById('vnc-hostname').value;
+                body.port = parseInt(document.getElementById('vnc-port').value) || 5900;
+                var pw = document.getElementById('vnc-password').value;
+                if (pw) body.password = pw;
             } else if (sessionType.value === 'rdp') {
                 body.session_type = 'rdp';
                 body.hostname = document.getElementById('rdp-hostname').value;
@@ -316,6 +612,15 @@
                     if (pk) body.private_key = pk;
                 }
             }
+            // Jump hosts (multi-hop, all session types)
+            var hops = hopList.filter(function(h) { return h.hostname && h.hostname.trim(); })
+                .map(function(h) {
+                    var hop = { hostname: h.hostname.trim(), port: h.port || 22, username: h.username || '' };
+                    if (h.password) hop.password = h.password;
+                    if (h.private_key) hop.private_key = h.private_key;
+                    return hop;
+                });
+            if (hops.length > 0) body.jump_hosts = hops;
             var banner = document.getElementById('banner').value;
             if (banner) body.banner = banner;
 
@@ -331,6 +636,8 @@
             })
             .then(function(data) {
                 window.open(data.client_url, '_blank');
+                hopList = [];
+                renderHops();
                 refreshSessions();
             })
             .catch(function(err) {

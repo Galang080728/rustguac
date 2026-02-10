@@ -52,6 +52,7 @@
         }
         .type-ssh { background: #1b4332; color: #52b788; }
         .type-rdp { background: #3d1f00; color: #f0a050; }
+        .type-vnc { background: #2d1b4e; color: #b07ff0; }
         .type-web { background: #1a1a4e; color: #7b8ff0; }
 
         button {
@@ -141,6 +142,93 @@
         .modal-actions .btn-cancel:hover { background: #444; }
 
         .field-hint { font-size: 0.8em; color: #555; margin-top: 0.2em; }
+
+        /* Hop cards */
+        .hop-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            margin-bottom: 0.6em;
+        }
+        .hop-card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            padding: 0.4em 0.6em;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .hop-card-header:hover { background: var(--surface); }
+        .hop-card-header .hop-num {
+            color: var(--accent);
+            font-weight: bold;
+            min-width: 2em;
+        }
+        .hop-card-header .hop-hostname {
+            flex: 1;
+            color: var(--text);
+        }
+        .hop-card-header .hop-hostname input {
+            display: inline;
+            width: 100%;
+            padding: 0.2em 0.4em;
+            background: var(--input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: monospace;
+            font-size: 1em;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        .hop-card-header .hop-remove {
+            color: var(--primary);
+            cursor: pointer;
+            font-size: 0.85em;
+            background: none;
+            border: none;
+            padding: 0.2em 0.4em;
+            font-family: monospace;
+        }
+        .hop-card-header .hop-remove:hover { text-decoration: underline; }
+        .hop-card-body {
+            padding: 0.4em 0.6em 0.6em 2.6em;
+            display: none;
+        }
+        .hop-card-body.expanded { display: block; }
+        .hop-card-body label { margin-top: 0.5em; }
+        .hop-card-body input, .hop-card-body textarea {
+            display: block;
+            width: 100%;
+            padding: 0.3em;
+            margin-top: 0.2em;
+            background: var(--input);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: monospace;
+            font-size: 0.95em;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+
+        /* Flow diagram */
+        .flow-diagram {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            flex-wrap: wrap;
+            margin-bottom: 0.8em;
+            font-size: 0.85em;
+        }
+        .flow-node {
+            display: inline-block;
+            padding: 0.2em 0.6em;
+            border-radius: 3px;
+            white-space: nowrap;
+        }
+        .flow-node-you { background: var(--input); color: var(--text-muted); }
+        .flow-node-hop { background: #1b4332; color: #52b788; }
+        .flow-node-target { background: var(--input); color: var(--accent); font-weight: bold; }
+        .flow-arrow { color: var(--text-muted); margin: 0 0.3em; }
     </style>
 </head>
 <body>
@@ -245,6 +333,7 @@
                 <select id="em-type">
                     <option value="ssh">SSH</option>
                     <option value="rdp">RDP</option>
+                    <option value="vnc">VNC</option>
                     <option value="web">Web</option>
                 </select>
             </label>
@@ -314,6 +403,30 @@
                 </label>
                 <div class="field-hint">When enabled, users will be asked for username/password even if credentials are stored.</div>
             </div>
+            <div id="em-vnc-fields" style="display:none">
+                <label>Hostname
+                    <input type="text" id="em-vnc-hostname" placeholder="10.0.3.1">
+                </label>
+                <label>Port
+                    <input type="number" id="em-vnc-port" value="5900">
+                </label>
+                <label>Password
+                    <input type="password" id="em-vnc-password">
+                </label>
+                <label>Color depth
+                    <select id="em-vnc-color-depth">
+                        <option value="">Default (24-bit)</option>
+                        <option value="8">8-bit</option>
+                        <option value="16">16-bit</option>
+                        <option value="24">24-bit</option>
+                        <option value="32">32-bit</option>
+                    </select>
+                </label>
+                <label style="margin-top:0.8em">
+                    <input type="checkbox" id="em-vnc-prompt-creds" style="display:inline;width:auto;margin-right:0.4em"> Prompt for credentials at connect time
+                </label>
+                <div class="field-hint">When enabled, users will be asked for a password even if one is stored.</div>
+            </div>
             <div id="em-web-fields" style="display:none">
                 <label>URL
                     <input type="text" id="em-url" placeholder="https://example.com">
@@ -324,6 +437,17 @@
                     <input type="checkbox" id="em-enable-drive" style="display:inline;width:auto;margin-right:0.4em"> Enable file transfer
                     <div style="color:#888;font-size:0.75em;margin-top:0.2em;">RDP: mounts a shared drive. SSH: enables SFTP file browser.</div>
                 </label>
+            </div>
+            <div id="em-tunnel-section" style="display:none;margin-top:1em;padding-top:0.8em;border-top:1px solid var(--border)">
+                <label style="cursor:pointer;color:var(--accent);font-size:0.95em" id="em-tunnel-toggle">
+                    <span id="em-tunnel-arrow">&#9654;</span> SSH Tunnel / Jump Hosts
+                </label>
+                <div id="em-tunnel-fields" style="display:none">
+                    <div class="field-hint" style="margin-bottom:0.5em">Route this connection through one or more SSH bastion hosts.</div>
+                    <div id="em-flow-diagram" class="flow-diagram"></div>
+                    <div id="em-hops-list"></div>
+                    <button type="button" class="btn-add" id="em-add-hop" style="margin-top:0.3em;padding:0.2em 0.8em;font-size:0.85em">+ Add Jump Host</button>
+                </div>
             </div>
             <div id="em-move-section" style="display:none;margin-top:1em;padding-top:0.8em;border-top:1px solid var(--border)">
                 <label>Move to folder
@@ -605,8 +729,13 @@
 
             entries.forEach(function(e) {
                 var label = e.display_name || e.name;
-                var host = e.session_type === 'web' ? (e.url || '') : (e.hostname || '');
-                if (e.port && e.session_type !== 'web') host += ':' + e.port;
+                var hostBase = e.session_type === 'web' ? (e.url || '') : (e.hostname || '');
+                if (e.port && e.session_type !== 'web') hostBase += ':' + e.port;
+                var hostSuffix = '';
+                if (e.jump_hosts && e.jump_hosts.length > 0) {
+                    var hopNames = e.jump_hosts.map(function(h) { return h.hostname; }).join(' \u2192 ');
+                    hostSuffix = ' <span style="color:#888;font-size:0.8em" title="via ' + escapeAttr(hopNames) + '">via ' + escapeHtml(hopNames) + '</span>';
+                }
                 var typeCls = 'type-' + e.session_type;
 
                 html += '<tr>';
@@ -614,7 +743,7 @@
                 var typeLabel = e.session_type.toUpperCase();
                 if (e.auth_pkg) typeLabel += ' <span style="font-size:0.75em;color:#888">(' + escapeHtml(e.auth_pkg) + ')</span>';
                 html += '<td><span class="type-badge ' + typeCls + '">' + typeLabel + '</span></td>';
-                html += '<td>' + escapeHtml(host) + '</td>';
+                html += '<td>' + escapeHtml(hostBase) + hostSuffix + '</td>';
                 var userCol = e.username ? escapeHtml(e.username) : '';
                 var needsPrompt = (e.prompt_credentials || !e.has_credentials) && e.session_type !== 'web';
                 if (needsPrompt) userCol += ' <span style="color:#888;font-size:0.8em" title="Credentials will be prompted at connect time">[prompt]</span>';
@@ -677,15 +806,18 @@
             var label = entry.display_name || entry.name;
             document.getElementById('cred-modal-title').textContent = 'Credentials for ' + label;
             var isRdp = entry.session_type === 'rdp';
+            var isVnc = entry.session_type === 'vnc';
             document.getElementById('cred-domain-row').style.display = isRdp ? '' : 'none';
+            // VNC has password only — hide username row
+            document.getElementById('cred-username-row').style.display = isVnc ? 'none' : '';
             // Pre-fill username if the entry has one stored
-            document.getElementById('cred-username').value = entry.username || '';
+            document.getElementById('cred-username').value = isVnc ? '' : (entry.username || '');
             document.getElementById('cred-password').value = '';
             document.getElementById('cred-domain').value = entry.domain || '';
             document.getElementById('cred-error').textContent = '';
             document.getElementById('cred-modal').classList.add('active');
-            // Focus password if username is pre-filled, otherwise focus username
-            if (entry.username) {
+            // Focus password if username is pre-filled or VNC, otherwise focus username
+            if (entry.username || isVnc) {
                 document.getElementById('cred-password').focus();
             } else {
                 document.getElementById('cred-username').focus();
@@ -903,13 +1035,169 @@
         entryTypeSelect.addEventListener('change', function() {
             document.getElementById('em-ssh-fields').style.display = 'none';
             document.getElementById('em-rdp-fields').style.display = 'none';
+            document.getElementById('em-vnc-fields').style.display = 'none';
             document.getElementById('em-web-fields').style.display = 'none';
             var val = entryTypeSelect.value;
             if (val === 'ssh') document.getElementById('em-ssh-fields').style.display = '';
             else if (val === 'rdp') document.getElementById('em-rdp-fields').style.display = '';
+            else if (val === 'vnc') document.getElementById('em-vnc-fields').style.display = '';
             else if (val === 'web') document.getElementById('em-web-fields').style.display = '';
             // Show drive option for SSH and RDP only
             document.getElementById('em-drive-section').style.display = (val === 'ssh' || val === 'rdp') ? '' : 'none';
+            // Show tunnel option for all session types
+            document.getElementById('em-tunnel-section').style.display = '';
+        });
+
+        // Toggle tunnel fields visibility
+        document.getElementById('em-tunnel-toggle').addEventListener('click', function() {
+            var fields = document.getElementById('em-tunnel-fields');
+            var arrow = document.getElementById('em-tunnel-arrow');
+            if (fields.style.display === 'none') {
+                fields.style.display = '';
+                arrow.innerHTML = '&#9660;';
+            } else {
+                fields.style.display = 'none';
+                arrow.innerHTML = '&#9654;';
+            }
+        });
+
+        // ── Multi-hop management ──
+        var hopList = []; // Array of {hostname, port, username, password, private_key, expanded}
+
+        function renderHops() {
+            var container = document.getElementById('em-hops-list');
+            container.innerHTML = '';
+            hopList.forEach(function(hop, i) {
+                var card = document.createElement('div');
+                card.className = 'hop-card';
+
+                // Header
+                var header = document.createElement('div');
+                header.className = 'hop-card-header';
+
+                var num = document.createElement('span');
+                num.className = 'hop-num';
+                num.textContent = '#' + (i + 1);
+                header.appendChild(num);
+
+                var hostWrap = document.createElement('span');
+                hostWrap.className = 'hop-hostname';
+                var hostInput = document.createElement('input');
+                hostInput.type = 'text';
+                hostInput.placeholder = 'bastion.example.com';
+                hostInput.value = hop.hostname || '';
+                hostInput.setAttribute('data-hop', i);
+                hostInput.setAttribute('data-field', 'hostname');
+                hostInput.addEventListener('input', onHopFieldChange);
+                hostInput.addEventListener('click', function(e) { e.stopPropagation(); });
+                hostWrap.appendChild(hostInput);
+                header.appendChild(hostWrap);
+
+                var toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'hop-remove';
+                toggle.textContent = hop.expanded ? 'collapse' : 'expand';
+                toggle.setAttribute('data-hop', i);
+                toggle.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    hopList[i].expanded = !hopList[i].expanded;
+                    renderHops();
+                });
+                header.appendChild(toggle);
+
+                var removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'hop-remove';
+                removeBtn.textContent = 'remove';
+                removeBtn.setAttribute('data-hop', i);
+                removeBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    hopList.splice(i, 1);
+                    renderHops();
+                    updateFlowDiagram();
+                });
+                header.appendChild(removeBtn);
+
+                card.appendChild(header);
+
+                // Body (collapsible)
+                var body = document.createElement('div');
+                body.className = 'hop-card-body' + (hop.expanded ? ' expanded' : '');
+
+                body.innerHTML =
+                    '<label>SSH Port<input type="number" data-hop="' + i + '" data-field="port" value="' + (hop.port || 22) + '"></label>' +
+                    '<label>Username<input type="text" data-hop="' + i + '" data-field="username" value="' + escapeAttr(hop.username || '') + '"></label>' +
+                    '<label>Password<input type="password" data-hop="' + i + '" data-field="password" value="' + escapeAttr(hop.password || '') + '"></label>' +
+                    '<label>Private key (PEM)<textarea data-hop="' + i + '" data-field="private_key" rows="2" style="resize:vertical;font-size:0.85em" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----">' + escapeHtml(hop.private_key || '') + '</textarea></label>';
+
+                var inputs = body.querySelectorAll('input, textarea');
+                for (var j = 0; j < inputs.length; j++) {
+                    inputs[j].addEventListener('input', onHopFieldChange);
+                }
+
+                card.appendChild(body);
+                container.appendChild(card);
+            });
+            updateFlowDiagram();
+        }
+
+        function onHopFieldChange(e) {
+            var idx = parseInt(e.target.getAttribute('data-hop'));
+            var field = e.target.getAttribute('data-field');
+            if (field === 'port') {
+                hopList[idx][field] = parseInt(e.target.value) || 22;
+            } else {
+                hopList[idx][field] = e.target.value;
+            }
+            if (field === 'hostname') updateFlowDiagram();
+        }
+
+        function updateFlowDiagram() {
+            var diag = document.getElementById('em-flow-diagram');
+            if (!diag) return;
+            var html = '<span class="flow-node flow-node-you">You</span>';
+            hopList.forEach(function(hop) {
+                var label = hop.hostname || '???';
+                html += '<span class="flow-arrow">&rarr;</span><span class="flow-node flow-node-hop">' + escapeHtml(label) + '</span>';
+            });
+            // Add target
+            var type = entryTypeSelect.value;
+            var targetHost = '';
+            var targetPort = '';
+            var typeLabel = type.toUpperCase();
+            if (type === 'ssh') {
+                targetHost = document.getElementById('em-hostname').value || '???';
+                targetPort = document.getElementById('em-port').value || '22';
+            } else if (type === 'rdp') {
+                targetHost = document.getElementById('em-rdp-hostname').value || '???';
+                targetPort = document.getElementById('em-rdp-port').value || '3389';
+            } else if (type === 'vnc') {
+                targetHost = document.getElementById('em-vnc-hostname').value || '???';
+                targetPort = document.getElementById('em-vnc-port').value || '5900';
+            } else if (type === 'web') {
+                try {
+                    var u = new URL(document.getElementById('em-url').value);
+                    targetHost = u.hostname || '???';
+                    targetPort = u.port || (u.protocol === 'https:' ? '443' : '80');
+                } catch(e) {
+                    targetHost = '???';
+                    targetPort = '80';
+                }
+            }
+            if (targetHost) {
+                html += '<span class="flow-arrow">&rarr;</span><span class="flow-node flow-node-target">' + escapeHtml(targetHost) + ':' + escapeHtml(targetPort) + ' ' + typeLabel + '</span>';
+            }
+            // Show URL rewrite warning for web sessions with hops
+            var warn = '';
+            if (type === 'web' && hopList.length > 0) {
+                warn = '<div style="color:var(--primary);font-size:0.8em;margin-top:0.4em">Note: The URL will be rewritten to 127.0.0.1:{tunnel_port} inside the headless browser. TLS certificate errors are expected if the target uses HTTPS.</div>';
+            }
+            diag.innerHTML = hopList.length > 0 ? html + warn : '';
+        }
+
+        document.getElementById('em-add-hop').addEventListener('click', function() {
+            hopList.push({ hostname: '', port: 22, username: '', password: '', private_key: '', expanded: true });
+            renderHops();
         });
 
         function openNewEntry() {
@@ -947,8 +1235,17 @@
             document.getElementById('em-rdp-kdc-url').value = '';
             document.getElementById('em-rdp-prompt-creds').checked = false;
             document.getElementById('em-ssh-prompt-creds').checked = false;
+            document.getElementById('em-vnc-hostname').value = '';
+            document.getElementById('em-vnc-port').value = '5900';
+            document.getElementById('em-vnc-password').value = '';
+            document.getElementById('em-vnc-color-depth').value = '';
+            document.getElementById('em-vnc-prompt-creds').checked = false;
             document.getElementById('em-url').value = '';
             document.getElementById('em-enable-drive').checked = false;
+            hopList = [];
+            renderHops();
+            document.getElementById('em-tunnel-fields').style.display = 'none';
+            document.getElementById('em-tunnel-arrow').innerHTML = '&#9654;';
         }
 
         function openEditEntry(name, scope, folder, type) {
@@ -1009,11 +1306,26 @@
                     document.getElementById('em-rdp-auth-pkg').value = entryData.auth_pkg || '';
                     document.getElementById('em-rdp-kdc-url').value = entryData.kdc_url || '';
                     document.getElementById('em-rdp-prompt-creds').checked = !!entryData.prompt_credentials;
+                } else if (type === 'vnc') {
+                    document.getElementById('em-vnc-hostname').value = entryData.hostname || '';
+                    document.getElementById('em-vnc-port').value = entryData.port || '5900';
+                    document.getElementById('em-vnc-color-depth').value = entryData.color_depth ? String(entryData.color_depth) : '';
+                    document.getElementById('em-vnc-prompt-creds').checked = !!entryData.prompt_credentials;
                 } else if (type === 'web') {
                     document.getElementById('em-url').value = entryData.url || '';
                 }
                 if (type === 'ssh' || type === 'rdp') {
                     document.getElementById('em-enable-drive').checked = !!entryData.enable_drive;
+                }
+                // Populate hop list from jump_hosts array
+                if (entryData.jump_hosts && entryData.jump_hosts.length > 0) {
+                    hopList = entryData.jump_hosts.map(function(h) {
+                        return { hostname: h.hostname || '', port: h.port || 22, username: h.username || '', password: '', private_key: '', expanded: false };
+                    });
+                    renderHops();
+                    // Auto-expand the tunnel section
+                    document.getElementById('em-tunnel-fields').style.display = '';
+                    document.getElementById('em-tunnel-arrow').innerHTML = '&#9660;';
                 }
             }
 
@@ -1070,6 +1382,16 @@
                 var kdcUrl = document.getElementById('em-rdp-kdc-url').value.trim();
                 if (kdcUrl) entry.kdc_url = kdcUrl;
                 if (document.getElementById('em-rdp-prompt-creds').checked) entry.prompt_credentials = true;
+            } else if (type === 'vnc') {
+                var h = document.getElementById('em-vnc-hostname').value.trim();
+                if (h) entry.hostname = h;
+                var p = parseInt(document.getElementById('em-vnc-port').value);
+                if (p) entry.port = p;
+                var pw = document.getElementById('em-vnc-password').value;
+                if (pw) entry.password = pw;
+                var cd = document.getElementById('em-vnc-color-depth').value;
+                if (cd) entry.color_depth = parseInt(cd);
+                if (document.getElementById('em-vnc-prompt-creds').checked) entry.prompt_credentials = true;
             } else if (type === 'web') {
                 var url = document.getElementById('em-url').value.trim();
                 if (url) entry.url = url;
@@ -1078,6 +1400,19 @@
             // Drive setting for SSH and RDP
             if (type === 'ssh' || type === 'rdp') {
                 entry.enable_drive = document.getElementById('em-enable-drive').checked;
+            }
+
+            // Tunnel / jump host settings (SSH, RDP, VNC) — multi-hop
+            if (type === 'ssh' || type === 'rdp' || type === 'vnc') {
+                var hops = hopList.filter(function(h) { return h.hostname && h.hostname.trim(); });
+                if (hops.length > 0) {
+                    entry.jump_hosts = hops.map(function(h) {
+                        var hop = { hostname: h.hostname.trim(), port: h.port || 22, username: h.username || '' };
+                        if (h.password) hop.password = h.password;
+                        if (h.private_key) hop.private_key = h.private_key;
+                        return hop;
+                    });
+                }
             }
 
             errEl.textContent = '';

@@ -183,6 +183,10 @@ pub struct Config {
     #[serde(default = "default_localhost_networks")]
     pub rdp_allowed_networks: Vec<String>,
 
+    /// CIDR allowlist for VNC session targets. Default: localhost only.
+    #[serde(default = "default_localhost_networks")]
+    pub vnc_allowed_networks: Vec<String>,
+
     /// CIDR allowlist for web session URL hosts. Default: localhost only.
     #[serde(default = "default_localhost_networks")]
     pub web_allowed_networks: Vec<String>,
@@ -299,6 +303,7 @@ impl Default for Config {
             site_title: default_site_title(),
             ssh_allowed_networks: default_localhost_networks(),
             rdp_allowed_networks: default_localhost_networks(),
+            vnc_allowed_networks: default_localhost_networks(),
             web_allowed_networks: default_localhost_networks(),
             trusted_proxies: Vec::new(),
             tls: None,

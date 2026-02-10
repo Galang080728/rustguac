@@ -8,6 +8,7 @@ mod guacd;
 mod oidc;
 mod protocol;
 mod session;
+mod tunnel;
 mod vault;
 mod websocket;
 

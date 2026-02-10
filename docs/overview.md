@@ -2,7 +2,7 @@
 
 ## What is rustguac?
 
-rustguac is a lightweight Rust replacement for the Apache Guacamole Java webapp. It provides browser-based remote access to SSH, RDP, and web browser sessions through [guacd](https://github.com/apache/guacamole-server), the Guacamole protocol daemon.
+rustguac is a lightweight Rust replacement for the Apache Guacamole Java webapp. It provides browser-based remote access to SSH, RDP, VNC, and web browser sessions through [guacd](https://github.com/apache/guacamole-server), the Guacamole protocol daemon.
 
 rustguac sits between web browsers and guacd, proxying the Guacamole protocol over WebSockets. It manages session lifecycle, authentication, session recording, and an optional Vault-backed address book.
 
@@ -36,6 +36,7 @@ rustguac and Apache Guacamole share the same foundation:
 | **Web sessions** | Not supported | Headless Chromium on Xvnc |
 | **Ephemeral SSH keys** | Not supported | Ed25519 keypair per session |
 | **File transfer encryption** | Not supported | LUKS + Vault key management |
+| **Multi-hop SSH tunnels** | Not supported | Chain multiple SSH bastion hops to reach isolated targets |
 | **Network allowlists** | Not supported | CIDR allowlists per protocol |
 | **Rate limiting** | Not built-in | Per-IP, per-endpoint (tower_governor) |
 | **Reverse proxy integration** | Generic | HAProxy + Knocknoc examples |
@@ -56,9 +57,16 @@ guacd (C, from guacamole-server)
     |
     +---> SSH server (for SSH sessions)
     +---> RDP server (for RDP sessions)
+    +---> VNC server (for VNC sessions)
     +---> Xvnc display (for web browser sessions)
               |
               +---> Chromium (kiosk mode)
+```
+
+For SSH, RDP, VNC, and web browser sessions, an optional multi-hop SSH tunnel chain can route the connection through one or more bastion hosts:
+
+```
+Browser -> rustguac -> SSH tunnel (hop 1) -> SSH tunnel (hop 2) -> ... -> guacd -> target
 ```
 
 Both links are encrypted by default: HTTPS between browsers and rustguac, TLS between rustguac and guacd.
@@ -71,13 +79,41 @@ Connects guacd directly to a target SSH server. Supports password, private key, 
 
 SFTP file transfer is available directly between the browser and the target SSH server (no files stored on the rustguac server).
 
+Supports optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts) to reach targets through bastion hosts.
+
 ### RDP
 
 Connects guacd to a target RDP server. Supports username/password, domain, and various RDP settings (security mode, certificate ignore, display resize). Drive redirection provides file transfer via a per-session directory on the rustguac server.
 
+Supports optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts) and [Kerberos NLA authentication](integrations.md#rdp-kerberos-nla-authentication).
+
+### VNC
+
+Connects guacd to a target VNC server. Supports password-based authentication. Useful for accessing existing VNC servers on the network (e.g., KVM/IPMI consoles, remote desktops, virtual machine displays).
+
+Supports optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts) to reach VNC targets through bastion hosts.
+
 ### Web browser
 
 Spawns a headless Xvnc display and Chromium in kiosk mode, then connects guacd via VNC to the local display. The user sees a full browser session in their own browser. Each session gets an isolated Chromium profile directory.
+
+Supports optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts) to reach web targets through bastion hosts. When a tunnel is configured, the URL is rewritten to `127.0.0.1:{tunnel_port}` so Chromium connects through the tunnel. Note that HTTPS targets will show certificate errors since the hostname changes.
+
+## SSH tunnel / jump hosts
+
+All session types (SSH, RDP, VNC, and web browser) can be routed through one or more SSH bastion hosts using multi-hop SSH tunnel chains. This is useful when target machines are not directly reachable from the rustguac server.
+
+Each hop in the chain establishes an SSH connection and creates a local TCP port forward (`direct-tcpip`). The hops are chained sequentially — each hop connects through the previous hop's local listener. The final hop forwards to the actual target (e.g., an RDP server on port 3389).
+
+```
+You -> bastion-1:22 -> bastion-2:22 -> target:3389 RDP
+```
+
+Jump hosts can be configured:
+- **Per address book entry** — admins configure the tunnel chain in the entry editor
+- **Per ad-hoc session** — powerusers add jump hosts when creating sessions from the Sessions page
+
+Each hop supports independent credentials (username + password or private key). Jump host credentials are stored in Vault alongside the address book entry and are never sent to the browser.
 
 ## Ports
 
@@ -103,6 +139,7 @@ src/
   oidc.rs          OpenID Connect login flow
   protocol.rs      Guacamole wire format parser
   session.rs       Session state machine
+  tunnel.rs        Multi-hop SSH tunnel chain
   vault.rs         Vault/OpenBao KV v2 client (AppRole auth)
   websocket.rs     WebSocket <-> guacd proxy
 static/

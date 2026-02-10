@@ -64,6 +64,33 @@ The response includes the public key in the `banner_text` field. The SSH connect
 }
 ```
 
+**RDP session with Kerberos NLA:**
+
+```json
+{
+  "session_type": "rdp",
+  "hostname": "fileserver.corp.example.com",
+  "port": 3389,
+  "username": "jdoe@CORP.EXAMPLE.COM",
+  "password": "secret",
+  "domain": "CORP.EXAMPLE.COM",
+  "security": "nla",
+  "auth_pkg": "kerberos",
+  "kdc_url": "https://dc.corp.example.com/KdcProxy"
+}
+```
+
+**VNC session:**
+
+```json
+{
+  "session_type": "vnc",
+  "hostname": "10.0.0.1",
+  "port": 5900,
+  "password": "vnc-secret"
+}
+```
+
 **Web browser session:**
 
 ```json
@@ -72,6 +99,91 @@ The response includes the public key in the `banner_text` field. The SSH connect
   "url": "https://example.com"
 }
 ```
+
+**Session with multi-hop SSH tunnel (any type):**
+
+```json
+{
+  "session_type": "rdp",
+  "hostname": "10.10.10.1",
+  "port": 3389,
+  "username": "Administrator",
+  "password": "secret",
+  "jump_hosts": [
+    {
+      "hostname": "bastion.example.com",
+      "port": 22,
+      "username": "jump-user",
+      "password": "jump-pass"
+    },
+    {
+      "hostname": "internal-gw.corp.local",
+      "port": 22,
+      "username": "gw-user",
+      "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n..."
+    }
+  ]
+}
+```
+
+**Web session with SSH tunnel:**
+
+```json
+{
+  "session_type": "web",
+  "url": "https://internal-app.corp.local:8443/dashboard",
+  "jump_hosts": [
+    {
+      "hostname": "bastion.example.com",
+      "port": 22,
+      "username": "jump-user",
+      "password": "jump-pass"
+    }
+  ]
+}
+```
+
+For web sessions, the tunnel forwards to the URL's host and port (inferred from the scheme: 80 for HTTP, 443 for HTTPS, or explicit port in the URL). The URL is rewritten to `{scheme}://127.0.0.1:{tunnel_port}{path}` for Chromium. HTTPS targets will show certificate warnings since the hostname changes.
+
+The `jump_hosts` array defines an ordered chain of SSH bastion hops. Each hop connects through the previous hop's tunnel. The final hop forwards to the session target. Jump hosts are supported for all session types.
+
+**Legacy single jump host fields** (`jump_host`, `jump_port`, `jump_username`, `jump_password`, `jump_private_key`) are still accepted for backward compatibility but `jump_hosts` takes precedence when both are provided.
+
+**All session fields:**
+
+| Field | Type | Used by | Description |
+|-------|------|---------|-------------|
+| `session_type` | string | All | `ssh`, `rdp`, `vnc`, or `web` (required) |
+| `hostname` | string | SSH, RDP, VNC | Target hostname or IP |
+| `port` | integer | SSH, RDP, VNC | Target port (defaults: SSH=22, RDP=3389, VNC=5900) |
+| `username` | string | SSH, RDP | Username for authentication |
+| `password` | string | SSH, RDP, VNC | Password (VNC uses this as the VNC password) |
+| `private_key` | string | SSH | OpenSSH PEM private key |
+| `generate_keypair` | boolean | SSH | Generate an ephemeral Ed25519 keypair |
+| `url` | string | Web | Target URL for web browser session |
+| `domain` | string | RDP | Windows domain |
+| `security` | string | RDP | `tls`, `nla`, or `rdp` |
+| `ignore_cert` | boolean | RDP | Ignore TLS certificate errors |
+| `auth_pkg` | string | RDP | NLA auth package: `kerberos`, `ntlm`, or empty (negotiate) |
+| `kdc_url` | string | RDP | Kerberos KDC or KDC Proxy URL |
+| `kerberos_cache` | string | RDP | Path to Kerberos credential cache (advanced) |
+| `color_depth` | integer | RDP | Color depth in bits (8, 16, 24, 32) |
+| `enable_drive` | boolean | RDP, SSH | Enable file transfer / drive redirection |
+| `jump_hosts` | array | All | Multi-hop SSH tunnel chain (see below) |
+| `width` | integer | All | Display width in pixels |
+| `height` | integer | All | Display height in pixels |
+| `dpi` | integer | All | Display DPI |
+| `banner` | string | All | Banner message shown before session starts |
+
+**Jump host object fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `hostname` | string | Yes | SSH bastion hostname |
+| `port` | integer | No | SSH port (default: 22) |
+| `username` | string | Yes | SSH username |
+| `password` | string | No | SSH password |
+| `private_key` | string | No | OpenSSH PEM private key |
 
 **Response:**
 
@@ -193,7 +305,23 @@ List entries in a folder. Scope is `shared` or `instance`. Requires folder group
 
 ### `POST /api/addressbook/folders/:scope/:folder/entries/:entry/connect`
 
-Create a session from an address book entry. Reads credentials from Vault server-side and creates a session. Requires **operator** role and folder group access.
+Create a session from an address book entry. Reads credentials (including jump host credentials) from Vault server-side and creates a session. Requires **operator** role and folder group access.
+
+Optional body to override or supply credentials at connect time:
+
+```json
+{
+  "username": "jdoe@CORP.EXAMPLE.COM",
+  "password": "user-password",
+  "domain": "CORP.EXAMPLE.COM",
+  "banner": "Custom banner message",
+  "width": 1920,
+  "height": 1080,
+  "dpi": 96
+}
+```
+
+Prompted credentials are used for the current session only and are never stored. Jump host credentials always come from the Vault entry and cannot be overridden at connect time.
 
 ### `POST /api/addressbook/folders` (admin)
 
@@ -218,11 +346,52 @@ Delete a folder and all its entries.
 
 ### `POST /api/addressbook/folders/:scope/:folder/entries` (admin)
 
-Create a connection entry.
+Create a connection entry. The body includes a `name` field plus all entry fields:
+
+```json
+{
+  "name": "prod-db",
+  "session_type": "ssh",
+  "hostname": "db.internal.example.com",
+  "port": 22,
+  "username": "admin",
+  "password": "secret",
+  "jump_hosts": [
+    {
+      "hostname": "bastion.example.com",
+      "port": 22,
+      "username": "jump-user",
+      "password": "jump-pass"
+    }
+  ]
+}
+```
+
+**Address book entry fields:**
+
+| Field | Type | Used by | Description |
+|-------|------|---------|-------------|
+| `session_type` | string | All | `ssh`, `rdp`, `vnc`, or `web` |
+| `hostname` | string | SSH, RDP, VNC | Target hostname or IP |
+| `port` | integer | SSH, RDP, VNC | Target port |
+| `username` | string | SSH, RDP | Username |
+| `password` | string | SSH, RDP, VNC | Password |
+| `private_key` | string | SSH | OpenSSH PEM private key |
+| `url` | string | Web | Target URL |
+| `domain` | string | RDP | Windows domain |
+| `security` | string | RDP | Security mode |
+| `ignore_cert` | boolean | RDP | Ignore certificate errors |
+| `auth_pkg` | string | RDP | NLA auth package |
+| `kdc_url` | string | RDP | Kerberos KDC URL |
+| `color_depth` | integer | RDP | Color depth |
+| `enable_drive` | boolean | RDP, SSH | Enable file transfer |
+| `display_name` | string | All | Friendly display name (shown as banner) |
+| `prompt_credentials` | boolean | All | Prompt user for credentials at connect time |
+| `jump_hosts` | array | All | Multi-hop SSH tunnel chain (same format as session creation) |
 
 ### `PUT /api/addressbook/folders/:scope/:folder/entries/:entry` (admin)
 
-Update a connection entry.
+Update a connection entry. Uses read-modify-write: reads existing entry from Vault, merges incoming fields on top. Credentials (`password`, `private_key`) that are omitted from the request are preserved from the existing entry. Jump host credentials are merged per-hop by index.
 
 ### `DELETE /api/addressbook/folders/:scope/:folder/entries/:entry` (admin)
 

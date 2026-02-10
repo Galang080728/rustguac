@@ -202,11 +202,12 @@ This allows a fleet of rustguac instances to share common entries while maintain
 
 ### Entry types
 
-Address book entries can be SSH, RDP, or Web connections. Each entry stores:
+Address book entries can be SSH, RDP, VNC, or Web connections. Each entry stores:
 
 - Connection type and target (hostname, port, URL)
 - Credentials (username, password, private key)
 - Protocol-specific settings (domain, security mode, certificate ignore, drive override)
+- **Multi-hop SSH tunnel chain** — optional ordered list of SSH bastion hosts to route through (all session types)
 - **Prompt for credentials** — when enabled, users are asked for username/password at connect time, even if stored credentials exist
 - **NLA auth package** (RDP only) — force Kerberos or NTLM for NLA authentication
 - **KDC URL** (RDP only) — Kerberos Key Distribution Center proxy URL
@@ -227,6 +228,71 @@ The credential prompt appears automatically when:
 2. The entry has no stored password or private key (SSH/RDP only; Web sessions don't use credentials)
 
 Prompted credentials are **never stored** — they're used for the current session only and discarded.
+
+---
+
+## SSH Tunnel / Multi-Hop Jump Hosts
+
+rustguac supports routing all session types (SSH, RDP, VNC, and web browser) through one or more SSH bastion hosts. This is useful when the target machine is not directly reachable from the rustguac server — for example, accessing an RDP server on an isolated network segment via a bastion host chain.
+
+### How it works
+
+Each jump host in the chain establishes an SSH connection and creates a local TCP port forward using SSH's `direct-tcpip` channel. The hops are chained sequentially:
+
+1. **Hop 1**: rustguac SSH-connects to `bastion-1:22`, opens a `direct-tcpip` channel to `bastion-2:22`, and listens on a local TCP port
+2. **Hop 2**: rustguac SSH-connects to `bastion-2:22` (via hop 1's local port), opens a `direct-tcpip` channel to `target:3389`, and listens on another local TCP port
+3. **guacd**: connects to the final local port, which tunnels through the entire chain to the target
+
+```
+rustguac -> [SSH] bastion-1:22 -> [SSH] bastion-2:22 -> [TCP] target:3389
+```
+
+The chain is set up sequentially (each hop must connect before the next starts) and torn down in reverse order when the session ends.
+
+### Configuration
+
+#### Address book entries
+
+Admins configure jump hosts per entry in the address book editor. Click "Add Jump Host" to add hops to the chain. Each hop has its own credentials (username + password or private key). A visual flow diagram shows the tunnel path.
+
+Jump host credentials are stored in Vault alongside the entry's other credentials and are never sent to the browser. When editing an entry, existing hop passwords and keys are preserved if the edit form omits them (per-hop credential merge by index).
+
+#### Ad-hoc sessions
+
+Powerusers can add jump hosts when creating sessions from the Sessions page. The same multi-hop card UI is available — click "Add Jump Host" in the SSH Tunnel section.
+
+### Per-hop credentials
+
+Each hop in the chain supports independent authentication:
+
+| Field | Description |
+|-------|-------------|
+| `hostname` | SSH bastion hostname (required) |
+| `port` | SSH port (default: 22) |
+| `username` | SSH username (required) |
+| `password` | SSH password |
+| `private_key` | OpenSSH PEM private key |
+
+At least one of `password` or `private_key` should be provided per hop.
+
+### Supported session types
+
+| Session type | Jump hosts supported | Notes |
+|-------------|---------------------|-------|
+| SSH | Yes | Tunnel forwards to SSH target |
+| RDP | Yes | Tunnel forwards to RDP target |
+| VNC | Yes | Tunnel forwards to VNC target |
+| Web | Yes | Tunnel forwards to URL host:port; URL is rewritten to `127.0.0.1:{tunnel_port}` |
+
+**Web session URL rewriting:** When jump hosts are configured for a web browser session, the SSH tunnel forwards to the URL's host and port (inferred from the scheme: 80 for HTTP, 443 for HTTPS, or explicit port). The URL passed to Chromium is rewritten to `{scheme}://127.0.0.1:{tunnel_port}{path}`. This means HTTPS targets will show certificate warnings since the hostname no longer matches the certificate. The original URL is still displayed in the session list.
+
+### Backward compatibility
+
+The legacy flat jump host fields (`jump_host`, `jump_port`, `jump_username`, `jump_password`, `jump_private_key`) are still accepted in the API and in existing Vault entries. When present, they are automatically normalized to a single-element `jump_hosts` array. The `jump_hosts` array takes precedence when both are provided.
+
+### Error handling
+
+Tunnel errors include the hop index for easier debugging. For example, if hop 2 in a 3-hop chain fails to connect, the error message will indicate "hop 2" specifically. When any hop fails, all previously established hops are torn down cleanly.
 
 ---
 

@@ -46,10 +46,11 @@ All session targets are validated against CIDR allowlists before connections are
 ```toml
 ssh_allowed_networks = ["127.0.0.0/8", "::1/128", "10.0.0.0/8"]
 rdp_allowed_networks = ["127.0.0.0/8", "::1/128", "10.0.0.0/8"]
+vnc_allowed_networks = ["127.0.0.0/8", "::1/128", "10.0.0.0/8"]
 web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 ```
 
-**Default: localhost only** — all three default to `["127.0.0.0/8", "::1/128"]`, preventing SSRF attacks out of the box.
+**Default: localhost only** — all four default to `["127.0.0.0/8", "::1/128"]`, preventing SSRF attacks out of the box.
 
 ## Authentication
 
@@ -202,6 +203,7 @@ trusted_proxies = ["127.0.0.1/32"]
 ## Credential handling
 
 - **Vault credentials** — address book entries are read server-side from Vault. Connection passwords and private keys are never sent to the browser.
+- **SSH tunnel credentials** — jump host passwords and private keys are stored in Vault alongside the address book entry. They are read server-side when establishing the tunnel chain and are never sent to the browser. For ad-hoc sessions, jump host credentials are provided in the session creation request and exist only in memory during tunnel setup.
 - **API keys** — only the SHA-256 hash is stored. The plaintext key is shown once at creation and cannot be retrieved.
 - **User API tokens** — same SHA-256 hash storage as admin API keys. The `rgu_` prefix enables secret scanning. Plaintext shown once at creation only.
 - **OIDC client secret** — can be provided via `OIDC_CLIENT_SECRET` environment variable instead of the config file.

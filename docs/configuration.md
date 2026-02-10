@@ -46,6 +46,7 @@ CIDR ranges controlling which hosts sessions can connect to. All default to loca
 |-----|---------|-------------|
 | `ssh_allowed_networks` | `["127.0.0.0/8", "::1/128"]` | Allowed SSH targets |
 | `rdp_allowed_networks` | `["127.0.0.0/8", "::1/128"]` | Allowed RDP targets |
+| `vnc_allowed_networks` | `["127.0.0.0/8", "::1/128"]` | Allowed VNC targets |
 | `web_allowed_networks` | `["127.0.0.0/8", "::1/128"]` | Allowed web session URL hosts |
 
 ## Trusted proxies

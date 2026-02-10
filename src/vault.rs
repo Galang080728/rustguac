@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::VaultConfig;
+use crate::tunnel;
 
 // ── Error type ──
 
@@ -59,7 +60,7 @@ pub struct FolderConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddressBookEntry {
     #[serde(rename = "type")]
-    pub session_type: String, // "ssh", "rdp", "web"
+    pub session_type: String, // "ssh", "rdp", "vnc", "web"
     pub hostname: Option<String>,
     pub port: Option<u16>,
     pub username: Option<String>,
@@ -78,6 +79,53 @@ pub struct AddressBookEntry {
     pub kdc_url: Option<String>,
     /// Whether to prompt for credentials at connect time (even if stored creds exist).
     pub prompt_credentials: Option<bool>,
+    /// VNC color depth (8, 16, 24, 32). Default: 24.
+    pub color_depth: Option<u8>,
+    /// Multi-hop SSH tunnel jump hosts (ordered).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_hosts: Option<Vec<tunnel::JumpHost>>,
+    /// Legacy: single SSH tunnel jump host (migrated to jump_hosts on read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_host: Option<String>,
+    /// Legacy: SSH tunnel jump port (default: 22).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_port: Option<u16>,
+    /// Legacy: SSH tunnel jump username.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_username: Option<String>,
+    /// Legacy: SSH tunnel jump password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_password: Option<String>,
+    /// Legacy: SSH tunnel jump private key (PEM).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_private_key: Option<String>,
+}
+
+impl AddressBookEntry {
+    /// Migrate legacy flat jump_host fields into the jump_hosts array.
+    /// If `jump_hosts` is already set, this is a no-op.
+    pub fn normalize_jump_hosts(&mut self) {
+        if self.jump_hosts.is_some() {
+            return;
+        }
+        if let Some(ref host) = self.jump_host {
+            if !host.is_empty() {
+                self.jump_hosts = Some(vec![tunnel::JumpHost {
+                    hostname: host.clone(),
+                    port: self.jump_port.unwrap_or(22),
+                    username: self.jump_username.clone().unwrap_or_default(),
+                    password: self.jump_password.clone(),
+                    private_key: self.jump_private_key.clone(),
+                }]);
+            }
+        }
+        // Clear legacy fields so they don't get written back
+        self.jump_host = None;
+        self.jump_port = None;
+        self.jump_username = None;
+        self.jump_password = None;
+        self.jump_private_key = None;
+    }
 }
 
 /// Entry metadata returned to non-admin users (credentials stripped).
@@ -102,10 +150,24 @@ pub struct EntryInfo {
     pub prompt_credentials: Option<bool>,
     /// Whether the entry has a stored password or private key.
     pub has_credentials: bool,
+    /// VNC color depth.
+    pub color_depth: Option<u8>,
+    /// SSH tunnel jump hosts (no credentials exposed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_hosts: Option<Vec<tunnel::JumpHostInfo>>,
 }
 
 impl From<(&str, &AddressBookEntry)> for EntryInfo {
     fn from((name, e): (&str, &AddressBookEntry)) -> Self {
+        let jump_hosts = e.jump_hosts.as_ref().map(|hops| {
+            hops.iter()
+                .map(|h| tunnel::JumpHostInfo {
+                    hostname: h.hostname.clone(),
+                    port: h.port,
+                    username: h.username.clone(),
+                })
+                .collect()
+        });
         Self {
             name: name.to_string(),
             session_type: e.session_type.clone(),
@@ -123,6 +185,8 @@ impl From<(&str, &AddressBookEntry)> for EntryInfo {
             prompt_credentials: e.prompt_credentials,
             has_credentials: e.password.as_ref().is_some_and(|p| !p.is_empty())
                 || e.private_key.as_ref().is_some_and(|k| !k.is_empty()),
+            color_depth: e.color_depth,
+            jump_hosts,
         }
     }
 }
@@ -439,8 +503,10 @@ impl VaultClient {
             200 => {
                 let json: serde_json::Value = resp.json().await?;
                 let data = &json["data"]["data"];
-                serde_json::from_value(data.clone())
-                    .map_err(|e| VaultError::Parse(format!("invalid entry: {}", e)))
+                let mut entry: AddressBookEntry = serde_json::from_value(data.clone())
+                    .map_err(|e| VaultError::Parse(format!("invalid entry: {}", e)))?;
+                entry.normalize_jump_hosts();
+                Ok(entry)
             }
             404 => Err(VaultError::NotFound),
             403 => Err(VaultError::Forbidden),
