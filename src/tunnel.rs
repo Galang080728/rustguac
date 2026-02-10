@@ -8,7 +8,7 @@
 //! Supports multi-hop chains: You → hop0 → hop1 → ... → target.
 
 use russh::client;
-use russh_keys::key::PrivateKeyWithHashAlg;
+use russh::keys::key::PrivateKeyWithHashAlg;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -96,13 +96,12 @@ impl std::fmt::Display for TunnelError {
 /// Minimal handler for the SSH client — accepts all server keys.
 struct TunnelHandler;
 
-#[async_trait::async_trait]
 impl client::Handler for TunnelHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &ssh_key::PublicKey,
+        _server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
         // For jump hosts, we accept any server key.
         // The real authentication happens at the protocol level (RDP/VNC/SSH).
@@ -219,12 +218,11 @@ pub async fn start(config: TunnelConfig, hop_index: usize) -> Result<SshTunnel, 
     tracing::debug!(hop = hop_index, "SSH connected to jump host {}", jump_addr);
 
     // Authenticate: try private key first, then password
-    let authenticated = if let Some(ref key_pem) = config.jump_private_key {
-        let private_key = russh_keys::decode_secret_key(key_pem, None).map_err(|e| {
+    let auth_result = if let Some(ref key_pem) = config.jump_private_key {
+        let private_key = russh::keys::decode_secret_key(key_pem, None).map_err(|e| {
             TunnelError::Key(hop_index, format!("failed to decode private key: {}", e))
         })?;
-        let key = PrivateKeyWithHashAlg::new(Arc::new(private_key), None)
-            .map_err(|e| TunnelError::Key(hop_index, format!("unsupported key type: {}", e)))?;
+        let key = PrivateKeyWithHashAlg::new(Arc::new(private_key), None);
         handle
             .authenticate_publickey(&config.jump_username, key)
             .await
@@ -241,7 +239,7 @@ pub async fn start(config: TunnelConfig, hop_index: usize) -> Result<SshTunnel, 
         ));
     };
 
-    if !authenticated {
+    if !auth_result.success() {
         return Err(TunnelError::Auth(
             hop_index,
             format!(
