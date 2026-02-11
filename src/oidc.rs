@@ -127,7 +127,7 @@ pub async fn login(State(oidc): State<OidcState>, Query(params): Query<LoginPara
 
     // Store post-login redirect URL in a cookie if provided and safe
     if let Some(ref next) = params.next {
-        if next.starts_with('/') && !next.contains("://") {
+        if next.starts_with('/') && !next.starts_with("//") && !next.contains("://") {
             let next_cookie = format!(
                 "rustguac_next={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
                 next
@@ -183,6 +183,17 @@ pub async fn callback(
             return axum::response::Redirect::to("/?sso_error=1").into_response();
         }
     };
+
+    // Verify the state cookie matches the state query parameter (binds flow to browser)
+    let state_cookie = extract_cookie_from_headers(&headers, "rustguac_oidc_state");
+    if state_cookie.as_deref() != Some(&state) {
+        tracing::warn!("OIDC callback state cookie mismatch");
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "OIDC state cookie mismatch"})),
+        )
+            .into_response();
+    }
 
     // Retrieve and remove the pending PKCE verifier
     let pending_entry = oidc.pending.lock().await.remove(&state);
@@ -366,7 +377,7 @@ pub async fn callback(
 
     // Check for post-login redirect cookie
     let redirect_to = extract_cookie_from_headers(&headers, "rustguac_next")
-        .filter(|n| n.starts_with('/') && !n.contains("://"))
+        .filter(|n| n.starts_with('/') && !n.starts_with("//") && !n.contains("://"))
         .unwrap_or_else(|| "/addressbook.html".to_string());
 
     // Set session cookie and redirect; clear OIDC state and next cookies
@@ -375,8 +386,9 @@ pub async fn callback(
         session_token, ttl_secs
     );
     let clear_state_cookie =
-        "rustguac_oidc_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
-    let clear_next_cookie = "rustguac_next=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
+        "rustguac_oidc_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
+    let clear_next_cookie =
+        "rustguac_next=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
 
     (
         AppendHeaders([
@@ -401,7 +413,8 @@ pub async fn logout(
             tokio::task::spawn_blocking(move || db::delete_auth_session(&db_clone, &token)).await;
     }
 
-    let clear_cookie = "rustguac_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
+    let clear_cookie =
+        "rustguac_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
 
     (
         [(header::SET_COOKIE, clear_cookie)],

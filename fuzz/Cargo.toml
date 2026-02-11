@@ -9,6 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dependencies.rustguac]
 path = ".."
@@ -23,6 +25,27 @@ bench = false
 [[bin]]
 name = "protocol_stream"
 path = "fuzz_targets/protocol_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_input"
+path = "fuzz_targets/api_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vault_response"
+path = "fuzz_targets/vault_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "websocket_message"
+path = "fuzz_targets/websocket_message.rs"
 test = false
 doc = false
 bench = false

@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "rustguac"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "axum",
  "axum-server",
@@ -2674,6 +2674,7 @@ dependencies = [
  "serde_urlencoded",
  "sha2",
  "ssh-key",
+ "subtle",
  "tokio",
  "tokio-rustls",
  "tokio-util",

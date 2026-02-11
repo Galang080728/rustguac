@@ -205,21 +205,29 @@ pub fn list_admins(db: &Db) -> rusqlite::Result<Vec<AdminInfo>> {
 /// Validate an API key against the database.
 /// Checks: exists, not disabled, not expired, IP allowed.
 /// On success, updates last_used_at and returns the admin info.
+/// Uses constant-time hash comparison (defence-in-depth against timing attacks).
 pub fn validate_api_key(
     db: &Db,
     key: &str,
     client_ip: Option<IpAddr>,
 ) -> Result<AdminInfo, AuthError> {
+    use subtle::ConstantTimeEq;
+
     let key_hash = hash_key(key);
     let conn = db.lock().unwrap();
 
-    let admin = conn
-        .query_row(
-            "SELECT id, name, allowed_ips, expires_at, disabled, created_at, last_used_at
-             FROM admins WHERE api_key_hash = ?1",
-            params![key_hash],
-            |row| {
-                Ok(AdminInfo {
+    // Fetch all admins and compare hashes in constant time
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, allowed_ips, expires_at, disabled, created_at, last_used_at, api_key_hash
+             FROM admins",
+        )
+        .map_err(|_| AuthError::InvalidKey)?;
+    let admin = stmt
+        .query_map([], |row| {
+            let stored_hash: String = row.get(7)?;
+            Ok((
+                AdminInfo {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     allowed_ips: row.get(2)?,
@@ -227,10 +235,15 @@ pub fn validate_api_key(
                     disabled: row.get::<_, i32>(4)? != 0,
                     created_at: row.get(5)?,
                     last_used_at: row.get(6)?,
-                })
-            },
-        )
-        .map_err(|_| AuthError::InvalidKey)?;
+                },
+                stored_hash,
+            ))
+        })
+        .map_err(|_| AuthError::InvalidKey)?
+        .filter_map(|r| r.ok())
+        .find(|(_, stored_hash)| key_hash.as_bytes().ct_eq(stored_hash.as_bytes()).into())
+        .map(|(admin, _)| admin)
+        .ok_or(AuthError::InvalidKey)?;
 
     if admin.disabled {
         return Err(AuthError::Disabled);
@@ -687,18 +700,26 @@ pub fn list_all_user_tokens(db: &Db) -> rusqlite::Result<Vec<(UserApiToken, Stri
 /// Validate a user API token. Returns the user and token metadata.
 /// Checks: exists, not disabled, not expired, user not disabled.
 /// Updates last_used_at on success.
+/// Uses constant-time hash comparison (defence-in-depth against timing attacks).
 pub fn validate_user_token(db: &Db, token: &str) -> Result<(User, UserApiToken), AuthError> {
+    use subtle::ConstantTimeEq;
+
     let token_hash = hash_key(token);
     let conn = db.lock().unwrap();
 
-    let result = conn.query_row(
-        "SELECT t.id, t.user_id, t.name, t.max_role, t.expires_at, t.disabled, t.created_at, t.last_used_at,
-                u.id, u.email, u.name, u.oidc_subject, u.role, u.disabled, u.created_at, u.last_login_at, u.oidc_groups
-         FROM user_api_tokens t
-         JOIN users u ON u.id = t.user_id
-         WHERE t.token_hash = ?1",
-        params![token_hash],
-        |row| {
+    // Fetch all tokens with their users and compare hashes in constant time
+    let mut stmt = conn
+        .prepare(
+            "SELECT t.id, t.user_id, t.name, t.max_role, t.expires_at, t.disabled, t.created_at, t.last_used_at,
+                    u.id, u.email, u.name, u.oidc_subject, u.role, u.disabled, u.created_at, u.last_login_at, u.oidc_groups,
+                    t.token_hash
+             FROM user_api_tokens t
+             JOIN users u ON u.id = t.user_id",
+        )
+        .map_err(|_| AuthError::InvalidKey)?;
+    let (user, token_info) = stmt
+        .query_map([], |row| {
+            let stored_hash: String = row.get(17)?;
             let token_info = UserApiToken {
                 id: row.get(0)?,
                 user_id: row.get(1)?,
@@ -720,12 +741,13 @@ pub fn validate_user_token(db: &Db, token: &str) -> Result<(User, UserApiToken),
                 last_login_at: row.get(15)?,
                 oidc_groups: row.get(16)?,
             };
-            Ok((user, token_info))
-        },
-    )
-    .map_err(|_| AuthError::InvalidKey)?;
-
-    let (user, token_info) = result;
+            Ok((user, token_info, stored_hash))
+        })
+        .map_err(|_| AuthError::InvalidKey)?
+        .filter_map(|r| r.ok())
+        .find(|(_, _, stored_hash)| token_hash.as_bytes().ct_eq(stored_hash.as_bytes()).into())
+        .map(|(user, token_info, _)| (user, token_info))
+        .ok_or(AuthError::InvalidKey)?;
 
     if token_info.disabled {
         return Err(AuthError::Disabled);

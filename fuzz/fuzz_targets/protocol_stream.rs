@@ -13,11 +13,8 @@ fuzz_target!(|data: &[u8]| {
         while pos < bytes.len() {
             let end = (pos + chunk_size).min(bytes.len());
             if let Ok(chunk) = std::str::from_utf8(&bytes[pos..end]) {
-                for result in parser.receive(chunk) {
-                    // Exercise encode on successfully parsed instructions
-                    if let Ok(inst) = result {
-                        let _ = inst.encode();
-                    }
+                for inst in parser.receive(chunk).into_iter().flatten() {
+                    let _ = inst.encode();
                 }
             }
             pos = end;
