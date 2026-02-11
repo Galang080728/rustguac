@@ -61,7 +61,7 @@ Replace `production` with your address book folder name. The entry name must mat
 
 **Link URL:**
 ```
-https://console.example.com/api/connect?hostname={{ object.primary_ip4.address.ip }}&protocol={{ object.cf.remote_protocol | default('ssh') }}&port={{ object.cf.remote_port | default('') }}
+https://console.example.com/api/connect?hostname={{ object.primary_ip4.address.ip }}&protocol={{ object.cf.remote_protocol | default('ssh') }}{% if object.cf.remote_port %}&port={{ object.cf.remote_port }}{% endif %}
 ```
 
 ### Enabling on a device
