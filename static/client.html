@@ -708,7 +708,11 @@
                 switch (state) {
                     case Guacamole.Client.State.CONNECTING: statusEl.textContent = 'Connecting...'; statusEl.className = ''; break;
                     case Guacamole.Client.State.WAITING: statusEl.textContent = 'Waiting for server...'; statusEl.className = ''; break;
-                    case Guacamole.Client.State.CONNECTED: statusEl.textContent = 'Connected'; statusEl.className = 'connected'; break;
+                    case Guacamole.Client.State.CONNECTED:
+                        statusEl.textContent = 'Connected'; statusEl.className = 'connected';
+                        // Send actual browser dimensions so guacd can resize the remote display
+                        client.sendSize(window.innerWidth, window.innerHeight);
+                        break;
                     case Guacamole.Client.State.DISCONNECTING: statusEl.textContent = 'Disconnecting...'; statusEl.className = ''; break;
                     case Guacamole.Client.State.DISCONNECTED: statusEl.textContent = 'Disconnected'; statusEl.className = ''; break;
                 }
@@ -766,10 +770,15 @@
             }
 
             client.getDisplay().onresize = function() { scaleDisplay(); };
+            var resizeTimer = null;
             window.addEventListener('resize', function() {
-                var anyPanelOpen = panelOpen || filePanelOpen;
                 scaleDisplay();
-                client.sendSize(anyPanelOpen ? window.innerWidth - 380 : window.innerWidth, window.innerHeight);
+                // Debounce sendSize — RDP display updates are expensive
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(function() {
+                    var anyPanelOpen = panelOpen || filePanelOpen;
+                    client.sendSize(anyPanelOpen ? window.innerWidth - 380 : window.innerWidth, window.innerHeight);
+                }, 250);
             });
 
             var connectData = shareToken ? 'token=' + encodeURIComponent(shareToken) : '';

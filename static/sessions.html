@@ -626,6 +626,10 @@
             if (hops.length > 0) body.jump_hosts = hops;
             var banner = document.getElementById('banner').value;
             if (banner) body.banner = banner;
+            // Send browser dimensions so the session starts at the right resolution
+            body.width = window.innerWidth;
+            body.height = window.innerHeight;
+            body.dpi = Math.round((window.devicePixelRatio || 1) * 96);
 
             fetch('/api/sessions', {
                 method: 'POST',
